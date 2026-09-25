@@ -15,7 +15,15 @@ if (!source) {
 const text = /^https?:/.test(source)
   ? await (await fetch(source)).text()
   : readFileSync(source, "utf8");
-const stats = JSON.parse(text);
+// A dead or misrouted endpoint answers with an HTML error page; that must
+// keep the committed bake like any other bad payload, never fail the deploy.
+let stats;
+try {
+  stats = JSON.parse(text);
+} catch {
+  console.warn("keeping the committed bake: the stats response is not JSON");
+  process.exit(0);
+}
 // Only an org-wide v3 snapshot (the worker's /v2/stats) carries what this bake
 // needs. While the worker still answers with an older shape, keep the
 // committed bake instead of failing the deploy: the page paints from that
