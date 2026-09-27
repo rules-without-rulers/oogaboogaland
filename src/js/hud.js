@@ -829,6 +829,8 @@
       else if (b.dataset.action === "board-next") pageBoard(1);
       else if (b.dataset.action === "recipe-copy") copyRecipe(b);
       else if (b.dataset.action === "intro-go") b.closest("[data-intro]").hidden = true;
+      else if (b.dataset.action === "account-login") BL.net.login();
+      else if (b.dataset.action === "account-logout") BL.net.logout();
       else if (b === el.mode && !modeSelected) actionHandler && actionHandler("mode-preset", nextDetachedView());
       else actionHandler && actionHandler(b.dataset.action);
     });
@@ -1158,5 +1160,14 @@
     };
     return { el, openFeed, closeFeed, openRecipe, closeRecipe, dismissOutside, openBoard, closeBoard, updateBoard, setRosterRow, setMeter, setStats, setAct, setMode, setGorilla, setDetachedView, setPrimary, setWeapon, setMagazine, setJetpack, setSubtitle, onAction, toast, tooltip, hint, hideHint, letterSign, selectTab, onPreset, onIdentityChange, setIdentity, setDonationUrl, onAssign, onUnassign, renderInventory, dispose };
   };
-  BL.hud = { create, renderIcon, signLettering, STATE_LABELS, statusFor };
+  // The account line in the sheet's foot is page-level: shown only when a backend answered, and
+  // the director hands every change of `BL.net.state` here, whichever scene is active.
+  const showAccount = ({ backend, me }) => {
+    $("account").hidden = !backend;
+    $("account-name").textContent = me ? me.display : "";
+    $("account-name").hidden = !me;
+    $("account-login").hidden = !!me;
+    $("account-logout").hidden = !me;
+  };
+  BL.hud = { create, renderIcon, signLettering, showAccount, STATE_LABELS, statusFor };
 })();

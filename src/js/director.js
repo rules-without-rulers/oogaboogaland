@@ -385,6 +385,10 @@
   // `?chain=esplora` or `?chain=https://host/api` pins the provider; otherwise mempool.space leads
   // and three consecutive failures hand the session to Esplora on its own.
   if (!params.has("nosim") && params.get("chain") !== "0") chain.start({ source: params.get("chain") });
+  // The account needs the Worker: without one /api/me finds nothing and the sheet shows no sign-in.
+  const net = window.BL.net;
+  const unsubscribeAccount = net.subscribe(window.BL.hud.showAccount);
+  if (!params.has("nosim") && params.get("net") !== "0") net.start();
   // A tab opened in the background waits for its first look before it holds any socket.
   if (document.hidden) {
     mempool.setHidden(true);
@@ -517,6 +521,8 @@
     mempool.dispose();
     chain.dispose();
     window.BL.oogatronLive.dispose();
+    unsubscribeAccount();
+    net.dispose();
     window.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("visibilitychange", onVisibility);
     active.leave();

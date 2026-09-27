@@ -1202,6 +1202,22 @@ body[data-active-scene="mine"] .mode-hud {
   flex: none;
 }
 
+.account {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.account-name {
+  color: var(--paper);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
 .quality {
   margin: 0;
   color: rgba(243, 239, 228, 0.6);

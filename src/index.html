@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src https://stream.noderunnersradio.com; connect-src https: wss:; base-uri 'none'; form-action 'none'">
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src https://stream.noderunnersradio.com; connect-src 'self' https: wss:; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0a0a0b">
@@ -271,6 +271,11 @@
       </section>
       <footer class="sheet-foot">
         <span class="quality" id="quality" aria-live="polite"></span>
+        <span class="account" id="account" hidden>
+          <span class="account-name" id="account-name" hidden></span>
+          <button type="button" class="link" data-action="account-login" id="account-login">Sign in with GitHub</button>
+          <button type="button" class="link" data-action="account-logout" id="account-logout" hidden>Sign out</button>
+        </span>
         <button type="button" class="link" data-action="reset">Reset demo</button>
       </footer>
     </aside>
@@ -1038,6 +1043,7 @@ Then run npm run build and ONLY=characters node test/run.mjs.</pre>
   <script src="js/mine-rigs.js"></script>
   <script src="js/game.js"></script>
   <script src="js/hud.js"></script>
+  <script src="js/net.js"></script>
   <script src="js/fx.js"></script>
   <script src="js/camera-cover.js"></script>
   <script src="js/crew.js"></script>

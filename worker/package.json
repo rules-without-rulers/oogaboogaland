@@ -1,0 +1,18 @@
+{
+  "name": "oogaboogaland-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Serves the built page and runs GitHub sign-in on Cloudflare Workers + D1",
+  "type": "module",
+  "license": "Unlicense",
+  "scripts": {
+    "dev": "npm --prefix .. run build:dist && wrangler dev --port 8787 --local-upstream localhost:8787",
+    "deploy": "npm --prefix .. run build:dist && wrangler deploy",
+    "migrate:local": "wrangler d1 migrations apply oogaboogaland --local",
+    "migrate:remote": "wrangler d1 migrations apply oogaboogaland --remote",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "devDependencies": {
+    "wrangler": "^4.141.0"
+  }
+}
