@@ -1,19 +1,22 @@
 // The island room: one Durable Object holding every signed-in player's socket. The Worker is its
 // only door (`/room`), and it hands over who the player is in x-player-* headers after checking the
 // session; nothing a client sends can change its identity. Ported from the OBL-Audio prototype:
-// hibernatable sockets with attachments, a 15 Hz snapshot while anything moved, an alarm sweeping
-// silent sockets, and one socket per player, where a newer one kicks the older with `replaced`.
+// hibernatable sockets with attachments, a snapshot at most 15 times a second while anything moves, an
+// alarm sweeping silent sockets once a minute, and one socket per player, where a newer one kicks the older with `replaced`.
 // Every claim on an Ooga passes `claimRefusal` against the cast the build writes (characters.gen.json).
 // Voice: the room alone talks to the Realtime SFU (the secret stays here), decides who hears whom
 // (`voicePeers`: both driving an Ooga in the same place) and re-checks it on every pull, so a page never
 // learns another player's session and cannot pull a voice it may not hear.
 // NPCs: the room elects one page as host (`electHost`), relays its binary pose frames to every other
 // page showing the island, and keeps the latest frame for pages that arrive or come back.
+// Cost: the room hibernates whenever nothing is happening, so no timer runs while idle: a snapshot is a
+// one-shot flush scheduled by a pose, voice lists are sent when who hears whom can change, and the host
+// is told how many pages follow it (`host { id, followers }`) so a lone host sends no frames.
 
 import { DurableObject } from "cloudflare:workers";
 import {
   CLOSE_KICK, CLOSE_PROTOCOL, MAX_PLAYERS, MOVE_HZ, STALE_MS, SWEEP_MS, TICK_HZ,
-  NPC_FRAME_MAX, NPC_HZ, OUTSIDE, VOICE_TRACK, castIndex, electHost, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken, voicePeers,
+  NPC_FRAME_MAX, NPC_HZ, OUTSIDE, VOICE_TRACK, castIndex, electHost, npcFollowers, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken, voicePeers,
 } from "./protocol.js";
 import { sfuClient } from "./sfu.js";
 import CAST_ROWS from "./characters.gen.json";
@@ -26,10 +29,11 @@ export class Room extends DurableObject {
     this.players = new Map();
     this.spawnSlot = 0;
     this.dirty = false;
-    this.tick = 0;
+    this.flushTimer = 0;
     this.sfu = sfuClient(env);
     this.voiceSig = new Map();
     this.hostId = 0;
+    this.followers = 0;
     this.lastNpc = null;
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     // The pile's sound loop started once, for good: every page plays it at (now - loopEpoch), so all
@@ -45,7 +49,7 @@ export class Room extends DurableObject {
       if (a) this.players.set(a.id, this.record(ws, a));
     }
     this.hostId = electHost(this.players.values());
-    if (this.players.size) this.startTick();
+    this.followers = npcFollowers(this.players.values(), this.hostId);
   }
 
   record(ws, a) {
@@ -102,9 +106,9 @@ export class Room extends DurableObject {
 
     const others = [];
     for (const o of this.players.values()) if (o !== p) others.push(this.view(o));
-    this.send(server, { t: "welcome", you: this.view(p), players: others, tickHz: TICK_HZ, now: Date.now(), loopEpoch: this.loopEpoch, host: this.hostId });
+    this.send(server, { t: "welcome", you: this.view(p), players: others, tickHz: TICK_HZ, now: Date.now(), loopEpoch: this.loopEpoch, host: this.hostId, followers: this.followers });
     this.broadcast({ t: "join", p: this.view(p) }, server);
-    this.startTick();
+    this.updateVoice();
     await this.ensureSweep();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -134,6 +138,7 @@ export class Room extends DurableObject {
       if (!takeToken(p.bucket, MOVE_HZ, p.seenAt)) return;
       p.x = msg.x; p.y = msg.y; p.z = msg.z; p.yaw = msg.yaw;
       this.dirty = true;
+      this.scheduleFlush();
     } else if (msg.t === "hub") {
       if (msg.on === p.inHub) return;
       p.inHub = msg.on;
@@ -143,6 +148,7 @@ export class Room extends DurableObject {
     } else if (msg.t === "zone") {
       if (msg.name === p.zone) return;
       p.zone = msg.name;
+      this.updateVoice();
     } else if (msg.t === "body") {
       if (msg.name === p.body) return;
       const refusal = claimRefusal(CAST, p.login, msg.name, this.players.values());
@@ -154,6 +160,7 @@ export class Room extends DurableObject {
         p.body = msg.name;
       }
       this.broadcast({ t: "body", id: p.id, name: p.body });
+      this.updateVoice();
     }
     ws.serializeAttachment(this.attachment(p));
   }
@@ -175,7 +182,11 @@ export class Room extends DurableObject {
     this.voiceSig.delete(p.id);
     this.broadcast({ t: "leave", id: p.id, reason });
     this.electHost();
-    if (!this.players.size) this.stopTick();
+    this.updateVoice();
+    if (!this.players.size && this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = 0;
+    }
   }
 
   release(p, reason) {
@@ -183,6 +194,7 @@ export class Room extends DurableObject {
     p.body = null;
     p.ws.serializeAttachment(this.attachment(p));
     this.broadcast({ t: "body", id: p.id, name: null });
+    this.updateVoice();
   }
 
   // An explicit kick before the close: a server-initiated close alone can leave the client in CLOSING.
@@ -196,18 +208,17 @@ export class Room extends DurableObject {
     }
   }
 
-  startTick() {
-    if (this.tick) return;
-    this.tick = setInterval(() => this.snapshot(), 1000 / TICK_HZ);
-  }
-
-  stopTick() {
-    if (this.tick) clearInterval(this.tick);
-    this.tick = 0;
+  // One snapshot at most every 1/TICK_HZ while poses arrive, and nothing pending once they stop, so the
+  // room can hibernate between bursts (a running interval would keep it awake, and billed, for good).
+  scheduleFlush() {
+    if (this.flushTimer) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = 0;
+      this.snapshot();
+    }, 1000 / TICK_HZ);
   }
 
   snapshot() {
-    this.updateVoice();
     if (!this.dirty) return;
     this.dirty = false;
     const ps = [];
@@ -215,12 +226,15 @@ export class Room extends DurableObject {
     this.broadcast({ t: "state", now: Date.now(), ps });
   }
 
+  // Also after any page's `hub` flag changes: the host sends frames only while someone follows.
   electHost() {
     const id = electHost(this.players.values());
-    if (id === this.hostId) return;
+    const followers = npcFollowers(this.players.values(), id);
+    if (id === this.hostId && followers === this.followers) return;
     this.hostId = id;
+    this.followers = followers;
     if (!id) this.lastNpc = null;
-    this.broadcast({ t: "host", id });
+    this.broadcast({ t: "host", id, followers });
   }
 
   // A binary frame is the NPC host's poses: taken only from the current host, capped in size and rate,
@@ -234,7 +248,8 @@ export class Room extends DurableObject {
     for (const q of this.players.values()) if (q !== p && q.inHub) this.send(q.ws, data);
   }
 
-  // Tells each player whom to hear, only when that list changed.
+  // Tells each player whom to hear, only when that list changed. Called wherever it can change: a join or
+  // leave, a body or zone, a voice session opened, announced or left.
   updateVoice() {
     if (!this.sfu) return;
     const desired = voicePeers([...this.players.values()]);
@@ -269,6 +284,7 @@ export class Room extends DurableObject {
         p.voice[kind] = sessionId;
         if (kind === "pub") p.voice.track = p.voice.pending = null;
         p.ws.serializeAttachment(this.attachment(p));
+        this.updateVoice();
         return json({ ok: true });
       }
       if (op === "publish") {
@@ -287,6 +303,7 @@ export class Room extends DurableObject {
         if (!p.voice.pub || !p.voice.pending) return json({ error: "nothing published" }, 400);
         p.voice.track = p.voice.pending;
         p.ws.serializeAttachment(this.attachment(p));
+        this.updateVoice();
         return json({ ok: true });
       }
       if (op === "pull") {
@@ -321,6 +338,7 @@ export class Room extends DurableObject {
       if (op === "leave") {
         p.voice = { pub: null, sub: null, track: null, pending: null };
         p.ws.serializeAttachment(this.attachment(p));
+        this.updateVoice();
         return json({ ok: true });
       }
       return json({ error: "unknown voice op" }, 404);

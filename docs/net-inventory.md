@@ -65,7 +65,7 @@ An `HTMLAudioElement` looping `audio/campfire.wav` (from `scripts/fetch-audio.sh
 | 2D positions, no validation | 3D pose on the island, bounds from `terrain.js` `RADIUS` 30 (grid ±31), rate capped |
 | campfire circle | the banana pile at the origin (its footprint grows: `pile.visualFootprintFor`) |
 | `.wav` in an `<audio>` element | a synthesized loop in Web Audio: `media-src` allows only the radio host, and AGENTS.md allows no audio files |
-| 15 Hz interval, 5 s stale alarm, kick then 4000 | kept as is |
+| 15 Hz interval, 5 s stale alarm, kick then 4000 | kick then 4000 kept; the interval became a one-shot flush per pose burst and the alarm runs once a minute (90 s stale), so the room can hibernate |
 | hearing rule inside the circle, checked on `pull` | kept, anchored on the pile |
 | SFU sessions never closed | closed on leave, sign-out and socket close |
 

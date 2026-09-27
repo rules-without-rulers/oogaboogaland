@@ -114,3 +114,13 @@ test("NPC host: the page longest in the room among those showing the island; nob
   assert.deepEqual(parseClientMessage('{"t":"hub","on":true}'), { t: "hub", on: true });
   assert.equal(parseClientMessage('{"t":"hub","on":"yes"}'), null);
 });
+
+test("NPC followers: every other page showing the island, so a lone host sends nothing", async () => {
+  const { electHost, npcFollowers } = await import("../src/protocol.js");
+  const p = (id, joinedAt, inHub) => ({ id, joinedAt, inHub });
+  const alone = [p(1, 10, true), p(2, 20, false)];
+  assert.equal(npcFollowers(alone, electHost(alone)), 0, "a page elsewhere or hidden does not follow");
+  const two = [p(1, 10, true), p(2, 20, true), p(3, 30, false)];
+  assert.equal(npcFollowers(two, electHost(two)), 1);
+  assert.equal(npcFollowers(two, 0), 0, "no host, no followers");
+});

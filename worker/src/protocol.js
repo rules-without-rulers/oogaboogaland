@@ -8,15 +8,18 @@
 // Room → client:  welcome { you, players, tickHz, now, loopEpoch }, join { p }, leave { id, reason },
 //                 body { id, name }, state { now, ps: [id, x, y, z, yaw, ...] }, kick { reason },
 //                 release { name, reason }   the Ooga this socket claimed is not, or no longer, its to drive
-//                 host { id }                who runs the NPCs now (0 for nobody); binary NPC frames from them
+//                 host { id, followers }     who runs the NPCs now (0 for nobody) and how many pages follow
+//                                            them (a host with none sends nothing); binary NPC frames from them
 // "ping" answers "pong" without waking the room (setWebSocketAutoResponse).
 
 export const TICK_HZ = 15;
 export const MOVE_HZ = 20;
 export const MAX_PLAYERS = 32;
 export const MESSAGE_MAX = 256;
-export const STALE_MS = 30000;
-export const SWEEP_MS = 5000;
+// The sweep only catches half-open sockets (a clean disconnect closes at once), and every alarm wakes the
+// room, so it runs once a minute; three missed 10 s pings make a socket stale.
+export const STALE_MS = 90000;
+export const SWEEP_MS = 60000;
 // Generous bounds around the hub: jetpack flight reaches about 140 out and 72 up, falls end at -120.
 export const BOUND_XZ = 160;
 export const BOUND_Y_MIN = -130;
@@ -26,7 +29,7 @@ export const ZONE_NAME = /^[a-z0-9-]{1,32}$/;
 export const OUTSIDE = "outside";
 // Close codes: 4000 follows a `kick` (replaced, stale, full); 4400 is a message the room cannot read.
 export const CLOSE_KICK = 4000;
-// NPC frames: the host sends about 10 a second; a frame of every Ooga's pose is a few kilobytes.
+// NPC frames: the host sends about 4 a second, only while a page follows; a frame of every Ooga's pose is a few kilobytes.
 export const NPC_FRAME_MAX = 16384;
 export const NPC_HZ = 20;
 export const CLOSE_PROTOCOL = 4400;
@@ -142,4 +145,12 @@ export const electHost = (players) => {
   let best = null;
   for (const p of players) if (p.inHub && (!best || p.joinedAt < best.joinedAt || (p.joinedAt === best.joinedAt && p.id < best.id))) best = p;
   return best ? best.id : 0;
+};
+
+/** How many pages follow the NPC host: every other page showing the island. 0 with no host. */
+export const npcFollowers = (players, hostId) => {
+  if (!hostId) return 0;
+  let count = 0;
+  for (const p of players) if (p.inHub && p.id !== hostId) count++;
+  return count;
 };

@@ -5,7 +5,7 @@
 // can be disabled with net=0; the director starts it.
 //
 // The room answers who else is on the island: `remotes` (id → { login, display, body, x, y, z, yaw }),
-// updated in place from its 15 Hz snapshots. A scene reports the Ooga the visitor drives with `setBody`
+// updated in place from its snapshots (up to 15 a second while anyone moves). A scene reports the Ooga the visitor drives with `setBody`
 // (null when none) and its feet and heading with `sendPose`, which throttles itself. A newer tab of the
 // same account kicks this one with `replaced`: it stops reconnecting until `rejoin`. `setZone` reports
 // the place the driven Ooga is in (out on the island, HQ, a cave), which decides who hears whom.
@@ -18,6 +18,9 @@
 // The NPC host: the room elects one page showing the island (`setHub`, which also counts a hidden tab
 // out) to run the Oogas for everyone. `state.hostId` names it; the host sends its binary pose frames with
 // `sendNpc`, and every other page reads the latest one from `npcFrame` (with `state.npcVersion` counting).
+// `state.followers` is how many pages follow the host; with none, the host sends nothing.
+// A tab hidden for HIDDEN_PAUSE_MS leaves the room (`paused`, voice stopped) and comes back when it is
+// looked at again, so a forgotten tab does not hold the room, the host role or voice.
 // The room's clock: `serverNow()` estimates it from the timestamps on `welcome` and `state`, keeping the
 // sample that arrived fastest (the least delayed), and `state.loopEpoch` is when the pile's shared
 // sound loop started, so every page can play the same moment of it.
@@ -26,14 +29,16 @@
 (() => {
   "use strict";
   const BL = window.BL = window.BL || {};
-  const POSE_MS = 1000 / 15;
+  const POSE_MS = 1000 / 10;
   const PING_MS = 10000;
+  const HIDDEN_PAUSE_MS = 5 * 60000;
   const BACKOFF_MS = 500, BACKOFF_MAX_MS = 15000;
   const subscribers = new Set();
   const remotes = new Map();
-  // room: "off" (signed out or no backend), "connecting", "live", or a kick that stopped it ("replaced", "full").
-  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null, loopEpoch: 0, zone: "outside", hostId: 0, npcVersion: 0 };
-  let ws = null, retry = 0, retryTimer = 0, pingTimer = 0, stopped = false;
+  // room: "off" (signed out or no backend), "connecting", "live", "paused" (hidden a while), or a kick that
+// stopped it ("replaced", "full").
+  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null, loopEpoch: 0, zone: "outside", hostId: 0, followers: 0, npcVersion: 0 };
+  let ws = null, retry = 0, retryTimer = 0, pingTimer = 0, hiddenTimer = 0, stopped = false;
   let npcFrame = null, inHub = false, hubSent = null;
   let zone = "outside", body = null, poseAt = 0, px = NaN, py = NaN, pz = NaN, pyaw = NaN;
   let clockOffset = 0, clockKnown = false;
@@ -114,6 +119,7 @@
       clockSample(msg.now);
       state.loopEpoch = typeof msg.loopEpoch === "number" ? msg.loopEpoch : 0;
       state.hostId = Number.isSafeInteger(msg.host) ? msg.host : 0;
+      state.followers = Number.isSafeInteger(msg.followers) ? msg.followers : 0;
       state.selfId = msg.you.id;
       remotes.clear();
       for (const p of msg.players) upsert(p);
@@ -138,6 +144,7 @@
       if (rec) rec.body = typeof msg.name === "string" ? msg.name : null;
     } else if (msg.t === "host") {
       state.hostId = Number.isSafeInteger(msg.id) ? msg.id : 0;
+      state.followers = Number.isSafeInteger(msg.followers) ? msg.followers : 0;
       emit();
     } else if (msg.t === "voice") {
       if (Array.isArray(msg.peers)) BL.voice.setPeers(msg.peers);
@@ -161,6 +168,7 @@
     }
     remotes.clear();
     state.hostId = 0;
+    state.followers = 0;
     npcFrame = null;
     hubSent = null;
     // Out of the room for good (signed out, another tab, full): voice goes with it.
@@ -247,7 +255,25 @@
     inHub = on;
     sendHub();
   };
-  document.addEventListener("visibilitychange", sendHub);
+  // Hidden long enough, the tab leaves the room; shown again, it rejoins as a fresh connection.
+  const onVisibility = () => {
+    sendHub();
+    window.clearTimeout(hiddenTimer);
+    hiddenTimer = 0;
+    if (document.hidden) {
+      if (state.me && !stopped) hiddenTimer = window.setTimeout(pause, HIDDEN_PAUSE_MS);
+    } else if (state.room === "paused") {
+      rejoin();
+    }
+  };
+  const pause = () => {
+    hiddenTimer = 0;
+    if (!document.hidden || stopped || !state.me) return;
+    stopped = true;
+    window.clearTimeout(retryTimer);
+    close("paused");
+  };
+  document.addEventListener("visibilitychange", onVisibility);
 
   // The host's frame of Oogas, sent as bytes (a typed array view is sent as just its own bytes).
   const sendNpc = (view) => {
@@ -301,9 +327,10 @@
   };
 
   const dispose = () => {
-    document.removeEventListener("visibilitychange", sendHub);
+    document.removeEventListener("visibilitychange", onVisibility);
     stopped = true;
     window.clearTimeout(retryTimer);
+    window.clearTimeout(hiddenTimer);
     subscribers.clear();
     close("off");
   };

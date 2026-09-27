@@ -14,14 +14,16 @@
 // phase, cave, planned cave). Events are what happens once: speech, sleep marks, dust and sparks, every
 // shot's flight, and the gorillas' plan and hit, so each page's gorillas react to the host's crew.
 // Pages built from a different cast (signature) or format ignore each other's frames.
+// Cost: the host sends only while the room reports followers (`net.state.followers`), and a frame whose
+// records match the last one sent, with no events, waits up to KEEP_S before it goes again.
 // One sync per hub visit: `create` after the crew, `update` after crew.update each frame, `dispose` in leave.
 (() => {
   "use strict";
   const BL = window.BL = window.BL || {};
   const { quat, fnv1a } = BL.math;
   const { addChild, removeChild } = BL.scene;
-  const FORMAT = 2, HEADER = 4, RECORD = 112, SEND_S = 0.1;
-  const EASE = 14, SNAP = 4, EVENTS_MAX = 96, SAY_MAX = 120;
+  const FORMAT = 2, HEADER = 4, RECORD = 112, SEND_S = 0.25, KEEP_S = 2;
+  const EASE = 8, SNAP = 4, EVENTS_MAX = 96, SAY_MAX = 120;
   const F_VISIBLE = 1, F_CLOSED = 2, F_ROOT_Q = 4, F_ARM_L_Q = 8, F_ARM_R_Q = 16, F_HEAD_Q = 32;
   const F_CLUB = 64, F_CLUB_Q = 128, F_GUN = 256, F_GUN_Q = 512, F_FLASH = 1024, F_SNACK = 2048;
   const F_STUNNED = 4096, F_FLAME = 8192, F_BED_GEAR = 16384;
@@ -38,12 +40,12 @@
     const index = new Map(list.map((cave, i) => [cave, i]));
     const signature = fnv1a(list.map((cave) => cave.traits.name).join(",")) >>> 0;
     const out = new Float32Array(HEADER + n * RECORD), outHeader = new Uint32Array(out.buffer, 0, HEADER);
-    const target = new Float32Array(n * RECORD);
+    const target = new Float32Array(n * RECORD), sent = new Float32Array(HEADER + n * RECORD);
     const have = new Uint8Array(n), fresh = new Uint8Array(n);
     // Each puppet's own quaternions: the crew's are never written from here.
     const quats = list.map(() => ({ root: quat.create(), armL: quat.create(), armR: quat.create(), head: quat.create(), club: quat.create(), gun: quat.create() }));
     const TQ = quat.create();
-    let role = "solo", sendIn = 0, seen = -1, frames = 0, events = [];
+    let role = "solo", sendIn = 0, sinceSent = 0, sentFloats = -1, seen = -1, frames = 0, events = [];
 
     const driven = (cave) => cave === crew.player || !!cave.remoteControlled;
     const holders = (cave) => [cave.parts.armL, cave.parts.armR, cave.root, cave.sleepWeapons];
@@ -156,7 +158,16 @@
         encodeCave(HEADER + k * RECORD, i, cave);
         k++;
       }
-      const bytes = (HEADER + k * RECORD) * 4;
+      const floats = HEADER + k * RECORD, bytes = floats * 4;
+      // Nothing moved and nothing happened: skip, but not for longer than KEEP_S.
+      if (!events.length && floats === sentFloats && sinceSent < KEEP_S) {
+        let same = true;
+        for (let i = HEADER; i < floats; i++) if (out[i] !== sent[i]) { same = false; break; }
+        if (same) return;
+      }
+      for (let i = HEADER; i < floats; i++) sent[i] = out[i];
+      sentFloats = floats;
+      sinceSent = 0;
       const tail = events.length ? encoder.encode(JSON.stringify(events)) : null;
       events = [];
       outHeader[0] = FORMAT; outHeader[1] = signature; outHeader[2] = k; outHeader[3] = tail ? tail.length : 0;
@@ -324,10 +335,19 @@
         if (role === "follow") release();
         role = next;
         sendIn = 0;
+        sentFloats = -1;
         seen = -1;
         events = [];
       }
       if (role === "host") {
+        // Nobody follows: nothing to send, and nothing saved up for later.
+        if (!st.followers) {
+          sendIn = 0;
+          sentFloats = -1;
+          events.length = 0;
+          return;
+        }
+        sinceSent += dt;
         sendIn -= dt;
         if (sendIn <= 0) {
           sendIn = SEND_S;
