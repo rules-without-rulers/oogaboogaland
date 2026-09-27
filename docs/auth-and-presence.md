@@ -49,11 +49,22 @@ A signed-in visitor holds one WebSocket to `/room` for the page life. The Worker
 | room → client | `welcome { you, players, tickHz, now }` | on connect: everyone else and their last pose |
 | room → client | `join { p }`, `leave { id, reason }`, `body { id, name }` | the roster changing |
 | room → client | `state { now, ps }` | 15 Hz while anything moved: `ps` is flat `id, x, y, z, yaw` runs |
+| room → client | `release { name, reason }` | a claim refused (`not-yours`, `owner-here`, `taken`, `unknown`) or an Ooga taken back by its arriving owner |
 | room → client | `kick { reason }`, then close 4000 | `replaced` (a newer tab), `stale` (30 s silent), `full` (32 players) |
 
 Frames the room cannot read close with 4400; out-of-bounds poses and unknown types are ignored. The pure rules are in `worker/src/protocol.js` with their checks in `worker/test/`.
 
 On the island (`src/js/remote-players.js`), each remote visitor driving an Ooga appears as that Ooga with their name over it, eased toward the room's poses. The local crew's copy of the same Ooga steps `away` while someone else drives it and comes back when they let go, so no Ooga stands twice; the NPC crew keeps working and walks round remote bodies. A visitor who is free roaming or in another game is not shown.
+
+### Who drives which Ooga
+
+Every Ooga belongs to a contributor, and ownership keys on the GitHub login alone: a character's `github`, or its handle when it has none (`bc1gui` is owned by `ottoz0r`; a different GitHub account that happens to be called `bc1gui` owns nothing).
+
+- A signed-in contributor drives **only their own** Ooga, and while they are signed in **nobody else** can drive it. The hub hands it to them on arrival (`claimOwnOoga`), once a visit, unless they already drive another; letting go keeps it let go until the next visit.
+- Everyone else, signed in or not, drives an Ooga only when its owner is **not signed in**, **nobody else** holds it, and it is **not working** (by its real activity; the hub's temporary overrides do not count).
+- An owner arriving takes their Ooga back: the room frees it and the driver's page lets go with a notice.
+
+The page enforces all of it (`net.mayDrive`, checked by `pilot.possess` through the scene's `mayPossess`). The room enforces ownership and who holds what (`claimRefusal` in `worker/src/protocol.js`, over the cast `npm run build:dist` writes to `worker/src/characters.gen.json`), so a tampered page cannot take a contributor's Ooga; a refused claim answers `release { name, reason }` and is never shown to anyone. Whether an Ooga is working comes from activity the room does not see, so that rule is the page's alone. The rules apply only on the page served by the Worker; without a backend (GitHub Pages, the test suite) any Ooga can be driven as before.
 
 A second tab of the same account takes over: the first is kicked with `replaced`, stops reconnecting, and its sheet footer offers **Play here**. Every deploy drops every socket; pages reconnect on their own with backoff (0.5 s × 1.7, up to 15 s).
 

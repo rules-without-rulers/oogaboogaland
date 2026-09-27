@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "build:dist": "node scripts/build.mjs && mkdir -p dist && cp oogaboogaland.html dist/index.html && cp worker/_headers dist/_headers",
+    "build:dist": "node scripts/build.mjs && mkdir -p dist && cp oogaboogaland.html dist/index.html && cp worker/_headers dist/_headers && node scripts/characters.mjs --json > worker/src/characters.gen.json",
     "serve": "node scripts/serve.mjs",
     "watch": "node scripts/serve.mjs --watch",
     "characters": "node scripts/characters.mjs --list",

@@ -21,6 +21,7 @@ untracked/
 /dist/
 .wrangler/
 worker/.dev.vars
+worker/src/characters.gen.json
 
 # Test artifacts (screenshots written by test/ scripts)
 test/*.png

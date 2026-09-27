@@ -34,7 +34,8 @@
       if (!cave) return;
       entry.hidden = null;
       cave.override = entry.hiddenOverride;
-      crew.refreshStates();
+      // Settled in place: a walk back in from away assumes a work slot, and a chilling Ooga has none.
+      crew.refreshStates(true);
     };
 
     const build = (rec) => {

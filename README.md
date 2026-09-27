@@ -25,6 +25,18 @@ Roster colours show activity across every OogaBoogaX repo: yellow worked in the 
 
 Around the rim: **EntropyLab** (11 o'clock), **Ooga Rally** (9), **Ooga Drop** (the plane on the rally roof), **Ooga Mine** (10), **Ooga Orbit** (the bridge off the south rim), the **Mempool island** (4) and the **Timechain Sphere** (southwest). Every game opens on a title card; **Enter** starts, **Escape** leaves.
 
+## Playing together
+
+On https://obl.ruleswithoutrulers.com, **Sign in with GitHub** at the foot of the side panel to share the island. Signed-in players see each other: whoever drives an Ooga appears as that Ooga, moving live, with their name above it, while the rest of the crew keeps working around them. The panel shows how many are online. Opening the island in a second tab moves you there; the first tab offers **Play here** to move back.
+
+Who drives which Ooga:
+
+- **Contributors drive their own.** If your GitHub login is a contributor's in `src/characters/`, signing in hands you your own Ooga, and while you are signed in nobody else can drive it. Contributors drive only their own Ooga.
+- **Everyone else** (signed in or not) may drive an Ooga only when its contributor is not signed in, nobody else is driving it, and it is not working (yellow in the roster). Resting and sleeping Oogas are free to borrow.
+- **Owners come first.** When a contributor signs in, their Ooga is handed back to them, and whoever was driving it lets go.
+
+Ownership goes by GitHub login, not by name. These rules apply on the signed-in site; the plain GitHub Pages build has no accounts and every Ooga is free there. How it works: `docs/auth-and-presence.md`.
+
 ## Timechain Sphere
 
 Sani's hangout: a walk-in sphere whose six inner walls show live [Timechain Index](https://timechainindex.com) data (BTC distribution, address balances, UTXO sizes, ETF and exchange holdings, top holders). The walls load once you come near and refresh every five minutes. Tap a wall for a close-up and its source; tap Sani to spin his chair. Holdings are on-chain balances and API attributions, not proof of ownership. `timechain=0` turns the feed off.

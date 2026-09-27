@@ -8,7 +8,14 @@
 // updated in place from its 15 Hz snapshots. A scene reports the Ooga the visitor drives with `setBody`
 // (null when none) and its feet and heading with `sendPose`, which throttles itself. A newer tab of the
 // same account kicks this one with `replaced`: it stops reconnecting until `rejoin`.
-// Exports start, subscribe, dispose, login, logout, rejoin, setBody, sendPose, remotes and state.
+//
+// Who drives which Ooga, on the page served by the Worker (`mayDrive`; the room enforces the same
+// ownership through its own copy of the cast): a signed-in contributor drives only their own Ooga, and
+// nobody else drives it while they are here; everyone else, signed in or not, drives an Ooga only while
+// its owner is away, nobody else holds it, and it is not working. Ownership keys on the GitHub login
+// alone (`github`, else the handle). A claim the room refuses, or an owner arriving, lands as `released`.
+// Exports start, subscribe, dispose, login, logout, rejoin, setBody, sendPose, mayDrive, ownCharacter,
+// remotes and state.
 (() => {
   "use strict";
   const BL = window.BL = window.BL || {};
@@ -18,7 +25,7 @@
   const subscribers = new Set();
   const remotes = new Map();
   // room: "off" (signed out or no backend), "connecting", "live", or a kick that stopped it ("replaced", "full").
-  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0 };
+  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null };
   let ws = null, retry = 0, retryTimer = 0, pingTimer = 0, stopped = false;
   let body = null, poseAt = 0, px = NaN, py = NaN, pz = NaN, pyaw = NaN;
 
@@ -88,6 +95,9 @@
     } else if (msg.t === "body") {
       const rec = remotes.get(msg.id);
       if (rec) rec.body = typeof msg.name === "string" ? msg.name : null;
+    } else if (msg.t === "release") {
+      state.released = { name: String(msg.name), reason: String(msg.reason) };
+      emit();
     } else if (msg.t === "kick") {
       // replaced and full stop here; stale reconnects like any drop.
       if (msg.reason !== "stale") stopped = true;
@@ -190,6 +200,30 @@
     send(`{"t":"pose","x":${x.toFixed(3)},"y":${y.toFixed(3)},"z":${z.toFixed(3)},"yaw":${yaw.toFixed(3)}}`);
   };
 
+  const loginOf = (character) => (character.github || character.handle).toLowerCase();
+  // The character whose GitHub login this is; a handle that only looks like the login does not count.
+  const characterOf = (login) => {
+    const character = BL.characters.get(login);
+    return character && loginOf(character) === String(login).toLowerCase() ? character : null;
+  };
+  const ownCharacter = () => state.me && characterOf(state.me.login);
+
+  /** null when this visitor may drive the Ooga named `name`; otherwise the words that say why not. */
+  const mayDrive = (name, working) => {
+    if (!state.backend) return null;
+    const owner = BL.characters.get(name);
+    if (!owner || owner.handle.toLowerCase() !== String(name).toLowerCase()) return null;
+    const who = owner.display || owner.handle;
+    const mine = ownCharacter();
+    if (mine) return mine === owner ? null : "Contributors drive only their own Ooga";
+    const ownerLogin = loginOf(owner), wanted = owner.handle.toLowerCase();
+    for (const rec of remotes.values()) {
+      if (rec.login.toLowerCase() === ownerLogin) return `${who} is here and drives this Ooga`;
+      if (rec.body && rec.body.toLowerCase() === wanted) return `Someone is already driving ${who}`;
+    }
+    return working ? `${who} is working: pick a resting or sleeping Ooga` : null;
+  };
+
   const subscribe = (fn) => {
     subscribers.add(fn);
     return () => subscribers.delete(fn);
@@ -202,5 +236,5 @@
     close("off");
   };
 
-  BL.net = { start, subscribe, dispose, login, logout, rejoin, setBody, sendPose, remotes, state };
+  BL.net = { start, subscribe, dispose, login, logout, rejoin, setBody, sendPose, mayDrive, ownCharacter, remotes, state };
 })();

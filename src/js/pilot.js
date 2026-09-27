@@ -58,7 +58,7 @@
     quat.normalize(out);
   };
   const create = (ctx) => {
-    const { renderer, canvas, camera, hud, presets, dist: [DIST_MIN, DIST_MAX], follow, fly, clampTarget, clampCamera, coarse, close = null, ceilingAt = null } = ctx;
+    const { renderer, canvas, camera, hud, presets, dist: [DIST_MIN, DIST_MAX], follow, fly, clampTarget, clampCamera, coarse, close = null, ceilingAt = null, mayPossess = null } = ctx;
     let crew = null, fx = null, input = null, reticleTarget = null, active = true;
     let restoredPose = null;
     const freeTarget = { x: 0, y: 0, z: 0 };
@@ -1706,6 +1706,12 @@
       return true;
     };
     const possess = (cave, preserveHeight = false) => {
+      // A scene may refuse an Ooga (whose it is, who is here): the refusal says why and nothing changes.
+      const refusal = mayPossess && mayPossess(cave);
+      if (refusal) {
+        hud.toast(refusal);
+        return;
+      }
       restoredPose = null;
       centeredCarry = false;
       rememberControlMode();

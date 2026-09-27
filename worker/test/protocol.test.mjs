@@ -58,3 +58,26 @@ test("identity comes only from the Worker's headers, all or nothing", () => {
   assert.equal(playerFromHeaders(h({ "x-player-id": "abc", "x-player-login": "ooga" })), null);
   assert.equal(playerFromHeaders(h({ "x-player-id": "42" })), null);
 });
+
+test("who may drive which Ooga: owners only their own, others only while the owner is away and nobody holds it", async () => {
+  const { castIndex, claimRefusal } = await import("../src/protocol.js");
+  const cast = castIndex([
+    { handle: "bc1gui", github_login: "ottoz0r" },
+    { handle: "portlandhodl", github_login: "portlandhodl" },
+    { handle: "rules-without-rulers", github_login: "rules-without-rulers" },
+  ]);
+  const room = (...players) => players.map(([login, body = null]) => ({ login, body }));
+  // A contributor, known by GitHub login: their own Ooga, and nothing else.
+  assert.equal(claimRefusal(cast, "ottoz0r", "bc1gui", room()), null);
+  assert.equal(claimRefusal(cast, "OTTOZ0R", "BC1GUI", room()), null);
+  assert.equal(claimRefusal(cast, "ottoz0r", "portlandhodl", room()), "not-yours");
+  // A handle is a name, not a login: another account called bc1gui owns nothing.
+  assert.equal(claimRefusal(cast, "bc1gui", "bc1gui", room(["ottoz0r"])), "owner-here");
+  // A visitor: only while the owner is away and nobody else holds it.
+  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room()), null);
+  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room(["portlandhodl"])), "owner-here");
+  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room(["someone", "portlandhodl"])), "taken");
+  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room(["visitor", "portlandhodl"])), null);
+  assert.equal(claimRefusal(cast, "visitor", "nobody-real", room()), "unknown");
+  assert.equal(claimRefusal(cast, "visitor", null, room(["portlandhodl"])), null);
+});

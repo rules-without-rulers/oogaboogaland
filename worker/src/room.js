@@ -3,12 +3,16 @@
 // session; nothing a client sends can change its identity. Ported from the OBL-Audio prototype:
 // hibernatable sockets with attachments, a 15 Hz snapshot while anything moved, an alarm sweeping
 // silent sockets, and one socket per player, where a newer one kicks the older with `replaced`.
+// Every claim on an Ooga passes `claimRefusal` against the cast the build writes (characters.gen.json).
 
 import { DurableObject } from "cloudflare:workers";
 import {
   CLOSE_KICK, CLOSE_PROTOCOL, MAX_PLAYERS, MOVE_HZ, STALE_MS, SWEEP_MS, TICK_HZ,
-  parseClientMessage, playerFromHeaders, spawnPoint, takeToken,
+  castIndex, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken,
 } from "./protocol.js";
+import CAST_ROWS from "./characters.gen.json";
+
+const CAST = castIndex(CAST_ROWS);
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
@@ -71,6 +75,9 @@ export class Room extends DurableObject {
     const spawn = spawnPoint(this.spawnSlot++);
     const p = this.record(server, { ...who, body: null, x: spawn.x, y: 0, z: spawn.z, yaw: spawn.yaw });
     server.serializeAttachment(this.attachment(p));
+    // An owner arriving takes their Ooga back from whoever holds it.
+    const own = CAST.handleOf.get(p.login.toLowerCase());
+    if (own) for (const o of this.players.values()) if (o.body && o.body.toLowerCase() === own) this.release(o, "owner-here");
     this.players.set(p.id, p);
 
     const others = [];
@@ -105,7 +112,14 @@ export class Room extends DurableObject {
       this.dirty = true;
     } else if (msg.t === "body") {
       if (msg.name === p.body) return;
-      p.body = msg.name;
+      const refusal = claimRefusal(CAST, p.login, msg.name, this.players.values());
+      if (refusal) {
+        this.send(ws, { t: "release", name: msg.name, reason: refusal });
+        if (p.body === null) return;
+        p.body = null;
+      } else {
+        p.body = msg.name;
+      }
       this.broadcast({ t: "body", id: p.id, name: p.body });
     }
     ws.serializeAttachment(this.attachment(p));
@@ -127,6 +141,13 @@ export class Room extends DurableObject {
     this.players.delete(p.id);
     this.broadcast({ t: "leave", id: p.id, reason });
     if (!this.players.size) this.stopTick();
+  }
+
+  release(p, reason) {
+    this.send(p.ws, { t: "release", name: p.body, reason });
+    p.body = null;
+    p.ws.serializeAttachment(this.attachment(p));
+    this.broadcast({ t: "body", id: p.id, name: null });
   }
 
   // An explicit kick before the close: a server-initiated close alone can leave the client in CLOSING.

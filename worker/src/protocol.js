@@ -3,7 +3,8 @@
 // Client → room:  { t: "pose", x, y, z, yaw }   the driven Ooga's feet and heading, at most MOVE_HZ
 //                 { t: "body", name }            the Ooga being driven, or null when driving none
 // Room → client:  welcome { you, players, tickHz, now }, join { p }, leave { id, reason },
-//                 body { id, name }, state { now, ps: [id, x, y, z, yaw, ...] }, kick { reason }
+//                 body { id, name }, state { now, ps: [id, x, y, z, yaw, ...] }, kick { reason },
+//                 release { name, reason }   the Ooga this socket claimed is not, or no longer, its to drive
 // "ping" answers "pong" without waking the room (setWebSocketAutoResponse).
 
 export const TICK_HZ = 15;
@@ -68,4 +69,38 @@ export const playerFromHeaders = (headers) => {
   const login = headers.get("x-player-login");
   if (!Number.isSafeInteger(id) || id <= 0 || !login) return null;
   return { id, login, display: headers.get("x-player-display") || login };
+};
+
+// Who may drive which Ooga. `cast` is the character rows the build writes from src/characters/
+// (`npm run characters:json`): every Ooga is a contributor's, keyed by handle, owned by its handle and
+// its GitHub login alone: a handle that differs from the login is a name, and some other GitHub account
+// may hold it. A contributor drives only their own; anyone else drives an Ooga only while its owner is
+// not in the room and nobody else holds it. Whether an Ooga is working comes from activity the room does
+// not see, so that rule stays with the page.
+export const castIndex = (cast) => {
+  const owners = new Map(), handleOf = new Map();
+  for (const row of cast) {
+    const handle = row.handle.toLowerCase();
+    const login = String(row.github_login || row.handle).toLowerCase();
+    owners.set(handle, login);
+    handleOf.set(login, handle);
+  }
+  return { owners, handleOf };
+};
+
+/** null when `login` may drive `body` now; otherwise the refusal reason. `players` iterates { login, body }. */
+export const claimRefusal = (index, login, body, players) => {
+  if (body === null) return null;
+  const want = body.toLowerCase();
+  const owner = index.owners.get(want);
+  if (!owner) return "unknown";
+  const me = login.toLowerCase();
+  const own = index.handleOf.get(me);
+  if (own) return own === want ? null : "not-yours";
+  for (const p of players) {
+    if (p.login.toLowerCase() === me) continue;
+    if (p.login.toLowerCase() === owner) return "owner-here";
+    if (p.body && p.body.toLowerCase() === want) return "taken";
+  }
+  return null;
 };
