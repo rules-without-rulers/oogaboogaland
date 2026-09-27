@@ -831,6 +831,7 @@
       else if (b.dataset.action === "intro-go") b.closest("[data-intro]").hidden = true;
       else if (b.dataset.action === "account-login") BL.net.login();
       else if (b.dataset.action === "account-logout") BL.net.logout();
+      else if (b.dataset.action === "account-rejoin") BL.net.rejoin();
       else if (b === el.mode && !modeSelected) actionHandler && actionHandler("mode-preset", nextDetachedView());
       else actionHandler && actionHandler(b.dataset.action);
     });
@@ -1162,12 +1163,17 @@
   };
   // The account line in the sheet's foot is page-level: shown only when a backend answered, and
   // the director hands every change of `BL.net.state` here, whichever scene is active.
-  const showAccount = ({ backend, me }) => {
+  const ROOM_WORDS = { replaced: "open in another tab", full: "island full" };
+  const showAccount = ({ backend, me, room, online }) => {
     $("account").hidden = !backend;
     $("account-name").textContent = me ? me.display : "";
     $("account-name").hidden = !me;
     $("account-login").hidden = !!me;
     $("account-logout").hidden = !me;
+    const words = room === "live" ? `${online} online` : ROOM_WORDS[room] || "";
+    $("account-room").textContent = words;
+    $("account-room").hidden = !me || !words;
+    $("account-rejoin").hidden = !me || !ROOM_WORDS[room];
   };
   BL.hud = { create, renderIcon, signLettering, showAccount, STATE_LABELS, statusFor };
 })();

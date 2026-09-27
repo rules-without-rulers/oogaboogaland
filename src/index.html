@@ -274,6 +274,8 @@
         <span class="account" id="account" hidden>
           <span class="account-name" id="account-name" hidden></span>
           <button type="button" class="link" data-action="account-login" id="account-login">Sign in with GitHub</button>
+          <span class="account-room" id="account-room" hidden></span>
+          <button type="button" class="link" data-action="account-rejoin" id="account-rejoin" hidden>Play here</button>
           <button type="button" class="link" data-action="account-logout" id="account-logout" hidden>Sign out</button>
         </span>
         <button type="button" class="link" data-action="reset">Reset demo</button>
@@ -1068,6 +1070,7 @@ Then run npm run build and ONLY=characters node test/run.mjs.</pre>
   <script src="js/solid-props.js"></script>
   <script src="js/breakables.js"></script>
   <script src="js/agent.js"></script>
+  <script src="js/remote-players.js"></script>
   <script src="js/ooga-portal-models.js"></script>
   <script src="js/ooga-portal.js"></script>
   <script src="js/ooga-portal-arrival.js"></script>

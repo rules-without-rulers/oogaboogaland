@@ -6,14 +6,14 @@ Rules for AI agents and people changing Ooga Booga Land. Read it before changing
 
 A WebGL2 floating island whose cliff caves are projects. The page lands on the hub. The open caves are the EntropyLab lab, where donated bananas feed voxel cavemen who stand for its contributors, and Ooga Rally, a three-track kart race. A plane on the rally cave's roof launches Ooga Drop, a skydive; a launch islet off the south rim flies Ooga Orbit; a vine bridge at 4 o'clock reaches the Mempool island, whose cave reads the chain out in stone; Ooga Mine is the 10 o'clock cave. Pile, crew, effects and loot crates are shared systems, and the pile level is shared everywhere.
 
-The page is static with three live feeds: the mempool.space socket (`mempool.js`), the chain snapshot (`chain.js`: REST from mempool.space or Esplora, plus the Coinbase price socket and its REST fallbacks) and the oogatron stats poller (`oogatron-live.js`: the jumbotron every minute, fireworks when org activity rises). Payments are a simulator stub and all state lives in localStorage. A backend comes later and must fit the contract in `src/js/donations.js`; add no network code for it before it exists. Player controls are in the README.
+The page is static with three live feeds: the mempool.space socket (`mempool.js`), the chain snapshot (`chain.js`: REST from mempool.space or Esplora, plus the Coinbase price socket and its REST fallbacks) and the oogatron stats poller (`oogatron-live.js`: the jumbotron every minute, fireworks when org activity rises). Payments are a simulator stub and all state lives in localStorage. A payments backend comes later and must fit the contract in `src/js/donations.js`; add no network code for it before it exists. Served from Cloudflare, the page sits behind the Worker in `worker/`, which adds GitHub sign-in (`docs/auth-and-presence.md`); served anywhere else it finds no backend and runs as it always has. Player controls are in the README.
 
 ## Ground rules
 
 - Read a file before editing it.
 - Never run git commands. The maintainer commits. No branches, stashes or `.gitignore` changes unless asked.
 - Vanilla JavaScript only: no frameworks, TypeScript, bundler, npm dependencies, external scripts or fonts. `package.json` holds only the build and test scripts.
-- Keep the content policy strict. `src/index.html` allows `self` scripts and styles and `connect-src https: wss:` (an owner decision so the page can poll its feeds); the build pins inline blocks by hash. Never add `unsafe-inline`, `unsafe-eval`, or a non-`self` script or style origin.
+- Keep the content policy strict. `src/index.html` allows `self` scripts and styles and `connect-src 'self' https: wss:` (an owner decision so the page can poll its feeds; `'self'` lets local `wrangler dev` reach the Worker over http); the build pins inline blocks by hash. Never add `unsafe-inline`, `unsafe-eval`, or a non-`self` script or style origin.
 - Smallest change that works. No refactors, reformatting or renames the task does not need. Match the surrounding style.
 - No console noise. The suite fails a check if the console is not clean.
 - Testing follows the Testing section. Never weaken or skip a check.
@@ -29,6 +29,9 @@ The page is static with three live feeds: the mempool.space socket (`mempool.js`
 | `scripts/build.mjs` | inlines `src/` in script order and pins the content-policy hashes |
 | `.github/workflows/pages.yml` | builds and deploys on pushes to `rock`, a ten-minute cron or manual runs. The deploy job's token stays read-only with `persist-credentials: false`; only the separate `artifact` job takes `contents: write`, and only on merges to `rock`. Keep that split |
 | `test/run.mjs`, `test/browser.mjs` | the suite and its headless Chrome driver, the whole of `test/` |
+| `worker/` | the Cloudflare Worker: GitHub sign-in, D1 sessions and `/api/*` in `src/`, migrations, `node --test` checks, `wrangler.jsonc`. Its own `package.json` holds `wrangler`, so the root one keeps only build and test scripts. `npm run build:dist` at the root writes the page and `worker/_headers` into the gitignored `dist/` it serves |
+| `.github/workflows/deploy-cloudflare.yml` | on pushes to `rock` and manual runs: unit checks, a fresh jumbotron snapshot, `build:dist`, the Worker's checks, D1 migrations, `wrangler deploy`. Read-only token and no cron, because every deploy drops live sockets. Setup in `docs/cloudflare-setup.md` |
+| `docs/` | contracts and runbooks: activity, sign-in, the networking inventory, Cloudflare setup |
 | `untracked/` | local planning notes, ignored by git |
 
 Nothing to install. `npm test` needs Node 22 or newer and Chrome; the driver looks at the macOS application path, so elsewhere set `CHROME` to the binary. `npm run test:unit` needs neither Chrome nor a build. Deploy only `oogaboogaland.html`, served as `index.html`: the workflow uploads only `_site/index.html`, never the source tree, and does not run the browser suite.
@@ -67,7 +70,9 @@ Classic scripts, each an IIFE with `"use strict"`, sharing `window.BL`. A file e
 | `interact.js`, `controls.js`, `cursor.js` | pointer gestures and picking; held keys, sticks and chords folded into one axes object per frame; the virtual cursor and pointer lock |
 | `pilot.js` | the visitor's view in any scene: orbit camera and presets, free flight, third person, the act button |
 | `game.js` | loot tiers, deterministic loot, inventory, localStorage, `formatLarge` |
-| `hud.js`, `fx.js` | the DOM panel (roster, meter, feed dialog, locker, toasts, tooltip); the particle pool, speech bubbles, zzz marks, overlay drawing |
+| `hud.js`, `fx.js` | the DOM panel (roster, meter, feed dialog, locker, toasts, tooltip; `showAccount` fills the sheet foot's sign-in line); the particle pool, speech bubbles, zzz marks, overlay drawing |
+| `net.js` | the account and the island room: one `/api/me` look on `start`, then for a signed-in visitor one socket to `/room` for the page life (backoff reconnects; a newer tab's `replaced` kick stops it until `rejoin`). `remotes` (id → login, display, body, pose) is updated in place from the room's 15 Hz snapshots; a scene reports the driven Ooga with `setBody` and `sendPose` (self-throttled). `login`, `logout`, `subscribe`, `state` (`backend`, `me`, `room`, `online`). No JSON from `/api/me` means no backend, and nothing shows. Off under `nosim` and `net=0` |
+| `remote-players.js` | the hub's pool of other visitors: a caveman per remote body from `models.caveman`, eased to the room's poses with a walk cycle, a nameplate on the overlay, the crew's own copy of that Ooga sent `away` while someone else drives it, and `actors` for the crew's `outsideActors`; capped at 32, created in `enter`, disposed in `leave` before the crew |
 | `crew.js` | cavemen: work trips, weapons, pile reloading, sleep, strolls, possession, jetpack, swag; `tint` colourways follow the day's price |
 | `npc-paths.js` | the surface path graph: 4096 fixed nodes in typed arrays with a binary heap, rebuilt when `path.version` changes |
 | `pile.js` | the banana pile: surface layer, then a layered shell over a mound; `MAX_BANANAS`; level on the shared `world` |
@@ -192,7 +197,7 @@ One jetpack exists per page, owned by the visitor on `world.jetpack` so it survi
 
 URL flags:
 - `?scene=<id>` opens that scene (unknown ids land on the hub). `?canvas2d=1` forces the fallback. `?yaw=` sets the starting camera angle.
-- `?nosim=1` silences the simulator and keeps the mempool socket closed; `?mempool=0` closes the socket alone; `?oogatron=0` stops the stats poll; `?chain=0` stops the REST polling and the price socket, and `?chain=esplora` or `?chain=https://host/api` pins the provider. `__ooga.mempool` (`emit`, `parse`) drives the weather offline, `__ooga.weather.apply` sets its two axes, and `__ooga.chain` readers take raw payloads.
+- `?nosim=1` silences the simulator and keeps the mempool socket closed; `?mempool=0` closes the socket alone; `?oogatron=0` stops the stats poll; `?net=0` keeps the account module from asking `/api/me`; `?chain=0` stops the REST polling and the price socket, and `?chain=esplora` or `?chain=https://host/api` pins the provider. `__ooga.mempool` (`emit`, `parse`) drives the weather offline, `__ooga.weather.apply` sets its two axes, and `__ooga.chain` readers take raw payloads.
 - With `debug=1`: `bananas=` sets the pile level (clamped to `pile.MAX_BANANAS`, ten million); `hour=` pins the clock's starting hour, `time=HHMM` freezes it, `day=` picks the day of year, `latitude=` changes the test latitude and `daylen=` runs a day in that many seconds (`__ooga.setHour(h, daylen, day)` resets it); `loot=1` turns loot on (it ships off behind `LOOT_DEFAULT`).
 - Fixtures, applied at startup only: `mag=1|2` grants spare magazines; `solo=1&character=<handle>` builds only that Ooga (none without a valid handle, across scenes); `weapon=1|2` holds the primary or secondary; `ammo=N` (0–30) or `ammo=unlimited` sets that actor's magazine; `character=`, `firstperson=1`, `jetpack=1` and `view=`. In the hub the position readout is on with debug (`pos=0` hides it); clicking it copies a `pose=` URL, and `pos`, `body`, `head`, `camera`, `look` and `mode=carry|shoulder|first-person|birds-eye|orbit|eye-level` set a pose by hand, and `combat=1|0` sets combat.
 - **Unfinished games.** A game still being built sets `wip: true` on its scene object, and `director.js` unregisters it unless the page opts in: `?wip=<scene id>` opens that game without `debug`, `wip=1` opens every one. A closed game's cave seals to rock, `?scene=` lands on the hub, `go()` throws, and the hub's other entry points toast "Not open yet"; its saves are never touched. Opening a game for everyone is deleting its `wip: true`. No game is `wip` today.
@@ -276,7 +281,7 @@ Profile before optimizing. Boot phases are `performance.mark`s readable from `__
 
 ## Privacy
 
-No analytics, no external requests, no personal data. Visitor handle and message stay in localStorage. The roster lists public contributor handles only. Every deliberate likeness lives in that person's own file in `src/characters/`, opt-in and removable; all other looks are hashed from the handle. No personal details about real people anywhere else. Test scripts must not embed absolute paths, user names or machine names.
+No analytics, no external requests, no personal data in the page. Visitor handle and message stay in localStorage. A visitor who signs in on the Cloudflare site has their GitHub id, login, avatar URL, chosen display name and session records (token hash, times, a truncated user agent) kept in D1, and can delete them with `DELETE /api/me`; the GitHub token is never stored. Nothing is kept for visitors who do not sign in. The roster lists public contributor handles only. Every deliberate likeness lives in that person's own file in `src/characters/`, opt-in and removable; all other looks are hashed from the handle. No personal details about real people anywhere else. Test scripts must not embed absolute paths, user names or machine names.
 
 ## Before you finish
 

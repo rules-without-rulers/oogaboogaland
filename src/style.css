@@ -1218,6 +1218,13 @@ body[data-active-scene="mine"] .mode-hud {
   overflow-wrap: anywhere;
 }
 
+.account-room {
+  color: var(--accent-text);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 .quality {
   margin: 0;
   color: rgba(243, 239, 228, 0.6);

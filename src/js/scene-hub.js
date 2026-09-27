@@ -154,6 +154,8 @@
   const DRESSING_LAMPS = BL.dressing.LIGHT_RGB.map(([r, g, b]) => ({ r, g, b, radius: 5.5, glow: 0.9, hide: false }));
   const dressingLights = [];
   const PILE_SCALE = 0.45;
+  // How tall a remote visitor's Ooga stands for the crew's walkers (`outsideActorHeight`).
+  const REMOTE_BODY_HEIGHT = 2.2;
   const SCENERY_CLEARANCE = 0.25;
   const OBL_REPO = "oogaboogax/oogaboogaland";
   const MEADOW_INNER = 5, MEADOW_OUTER = MEADOW - 1.5, CLIFF_INNER = MEADOW + 1.5, CLIFF_OUTER = RADIUS - 1;
@@ -207,7 +209,7 @@
   };
 
   // One visit's state: created in enter, dropped in leave.
-  let jumbotronSpot, oogatronUnsub, renderer, game, world, go, lootEnabled, testBananas, root, camera, overlayCanvas, island, terrainRampRoof, pathNode, altar, hud, hooks, input, pilot, fx, cameraCover, bananaCover, solids, rockGuides, objectGuides, sightGuides, bananaGuides, pileGuides, platformGuides, mirrorGuides, pile, crew, crates, critters, clock, presets, entering, mirrorCave, matrixCave, matrixControl, gateRain, fire, headquarters, dockStairs, jumbotron, positionDebug, pitGate;
+  let jumbotronSpot, oogatronUnsub, renderer, game, world, go, lootEnabled, testBananas, root, camera, overlayCanvas, island, terrainRampRoof, pathNode, altar, hud, hooks, input, pilot, fx, cameraCover, bananaCover, solids, rockGuides, objectGuides, sightGuides, bananaGuides, pileGuides, platformGuides, mirrorGuides, pile, crew, remotes, crates, critters, clock, presets, entering, mirrorCave, matrixCave, matrixControl, gateRain, fire, headquarters, dockStairs, jumbotron, positionDebug, pitGate;
   let magazine, magazineState, breakables, clankers, clankerPlay, clankerMeshes, clankerPartOwners, entropyLab;
   const clankerEquipment = [];
   const terrainSections = [], caveSections = [];
@@ -5970,6 +5972,8 @@
       timechainIsland.show(dt);
     }
     crew.update(dt, elapsed);
+    shareDrivenOoga();
+    remotes.update(dt);
     mempoolIsland.wildlife.update(dt, elapsed);
     // Sweep before any abyss equipment loss or respawn, including a whole-shaft fall in one step.
     if (!entering && !pilot.poseHeld && fallingPlayer && fallingPlayer === pilot.player
@@ -6042,8 +6046,15 @@
       updateMeter();
     }
   };
+  // The room sees the Ooga this visitor drives, by name, and where its feet are; none when free roaming.
+  const shareDrivenOoga = () => {
+    const driven = crew.player;
+    BL.net.setBody(driven ? driven.traits.name : null);
+    if (driven) BL.net.sendPose(driven.root.position.x, driven.root.position.y - driven.baseY, driven.root.position.z, driven.root.rotation.y);
+  };
   const drawExtra = (ctx2d, project, drawBubble) => {
     crew.drawQuotes(ctx2d, project, drawBubble);
+    remotes.drawNames(ctx2d, project);
     breakables.drawOverlay(ctx2d);
   };
   const cameraPlatformAt = (x, y, z) => y >= 0 && y <= ALTAR_HEIGHT && Math.hypot(x, z) <= altar.platformRadius;
@@ -7212,7 +7223,11 @@
     shared.workPlanned = (cave, site) => clankers && clankers.plan(cave, site);
     mark("pile");
     shared.residentPose = timechainResidentPose;
+    // Signed-in visitors elsewhere, as the Oogas they drive; the crew walks round them.
+    shared.outsideActors = () => remotes.actors();
+    shared.outsideActorHeight = REMOTE_BODY_HEIGHT;
     crew = shared.crew = crewMod.create(shared);
+    remotes = BL.remotePlayers.create({ root, crew });
     for (const cave of crew.list) crew.setJetpackOwnership(cave, true, hubModels.jetpack(), hubModels.jetFlame());
     // Sani hosts the island on ordinary visits; explicit activity fixtures still exercise every state.
     const sani = crew.cavemen.get("SaniExp");
@@ -7707,6 +7722,9 @@
       untrackMirrorObject(item.node); solids.remove(item.node); removeChild(root, item.node);
     }
     clankerEquipment.length = 0;
+    BL.net.setBody(null);
+    remotes.dispose();
+    remotes = null;
     crew.dispose();
     critters.dispose();
     fx.dispose();
@@ -7784,12 +7802,13 @@
     entropyLab.phase.liveGeometry(set);
     for (const item of clankerEquipment) set.add(item.node.geometry);
     for (const cave of crew.cavemen.values()) set.add(cave.headOpen).add(cave.headClosed);
+    remotes.liveGeometry(set);
   };
   const stats = () => {
     let nodes = 0;
     traverseVisible(root, () => nodes++);
     const all = (n) => 1 + n.children.reduce((sum, c) => sum + all(c), 0);
-    return { visibleNodes: nodes, allNodes: all(root), tweens: tweenCount(), targets: input.targetCount, ...fx.stats(), ...crates.stats(), ...crew.stats(), ...pile.stats(), ...critters.stats(), ...breakables.stats(), ...weather.stats() };
+    return { visibleNodes: nodes, allNodes: all(root), tweens: tweenCount(), targets: input.targetCount, ...fx.stats(), ...crates.stats(), ...crew.stats(), ...pile.stats(), ...critters.stats(), ...breakables.stats(), ...weather.stats(), ...remotes.stats() };
   };
   const hubScene = {
     id: "hub", enter, update, overlay, onDonation, onKey, onLootCleared, renderOpts: RENDER_OPTS, leave, stats, liveGeometry,

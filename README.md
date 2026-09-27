@@ -61,11 +61,15 @@ npm run build
 
 Writes `oogaboogaland.html`, one self-contained page with the content policy pinned to its hashes. CI commits it back after each merge to `rock`, and GitHub Pages serves it at https://oogaboogax.github.io/oogaboogaland/.
 
+The rules-without-rulers fork serves the same page from a Cloudflare Worker at https://obl.ruleswithoutrulers.com, with GitHub sign-in. It deploys on every merge to `rock`; `docs/cloudflare-setup.md` covers the setup and local development with `wrangler dev`, and `docs/auth-and-presence.md` the sign-in flow.
+
 To add your Ooga, add one file to `src/characters/` named after your GitHub handle; click **2140data** on the island for a prompt that walks you through it.
 
 ## Privacy
 
 No analytics and no personal data. Read-only requests only, nothing about the visitor sent: mempool.space (falling back to Esplora), Coinbase and other public price feeds, the oogatron stats worker and Timechain Index. The donation handle and message stay in localStorage.
+
+On the Cloudflare site, signing in with GitHub is optional. A signed-in player's GitHub id, login, avatar URL, display name and session records are kept in the site's database until they sign out, the session expires or they delete the account (`DELETE /api/me`). The GitHub token is used once and never stored. Nothing is kept for visitors who don't sign in.
 
 DSB Land additionally contacts public Bitcoin feeds and radio/media services; payment is always an explicit action in the visitor's wallet. Zuzu uses local mock replies and deterministic fallback and sends no conversations to an AI provider. Its provider-neutral backend is prepared but not deployed.
 
