@@ -45,6 +45,7 @@ A signed-in visitor holds one WebSocket to `/room` for the page life. The Worker
 |---|---|---|
 | client → room | `{ t: "body", name }` | the Ooga being driven, by name; `null` when free roaming or outside the hub |
 | client → room | `{ t: "pose", x, y, z, yaw }` | that Ooga's feet and heading, at most 15 a second from the page, 20 allowed |
+| client → room | `{ t: "zone", name }` | where that Ooga is: `outside`, `hq` or `cave-<id>`; voice is shared within one place |
 | client → room | `"ping"` every 10 s | answered `"pong"` without waking the room |
 | room → client | `welcome { you, players, tickHz, now, loopEpoch }` | on connect: everyone else and their last pose |
 | room → client | `join { p }`, `leave { id, reason }`, `body { id, name }` | the roster changing |
@@ -73,17 +74,19 @@ A second tab of the same account takes over: the first is kicked with `replaced`
 
 Everyone in the room hears the same fire at the pile at the same moment (`src/js/pile-audio.js`). The room stores the moment the loop started (`loopEpoch`, kept in Durable Object storage so a redeploy keeps the phase) and sends it in `welcome`; each page estimates the room's clock from the timestamps on `welcome` and `state` (`net.serverNow`) and plays the loop at `(serverNow - loopEpoch) mod 8 s`, re-seeking if it drifts past a quarter second. Two pages measured 32–35 ms apart.
 
-The sound is an eight-second crackle over an ember rumble, synthesized in Web Audio from a fixed seed, so the crackles fall at the same seconds on every machine: no audio file. It is full within 5 of the pile and gone by 16, heard from the driven Ooga, or from where the camera looks while roaming free. It plays only for signed-in visitors while the room is live, starts after the first click or key (browsers allow sound only after a gesture), and honours the page-wide mute (`oogaboogaland.audio`, which the games' M key sets).
+The sound is an eight-second crackle over an ember rumble, synthesized in Web Audio from a fixed seed, so the crackles fall at the same seconds on every machine: no audio file. It is quiet on purpose (half its first level), full within 5 of the pile and gone by 16, heard from the driven Ooga, or from where the camera looks while roaming free. It plays only for signed-in visitors while the room is live, starts after the first click or key (browsers allow sound only after a gesture), and honours the page-wide mute (`oogaboogaland.audio`, which the games' M key sets).
 
 ## Voice
 
-Signed-in players near the pile can talk (`src/js/voice.js`, `worker/src/room.js`, `worker/src/sfu.js`), over the Cloudflare Realtime SFU app `oogaboogaland-demo` (`REALTIME_APP_ID` in `wrangler.jsonc`, `REALTIME_SECRET` a Worker secret).
+Signed-in players can talk (`src/js/voice.js`, `worker/src/room.js`, `worker/src/sfu.js`), over the Cloudflare Realtime SFU app `oogaboogaland-demo` (`REALTIME_APP_ID` in `wrangler.jsonc`, `REALTIME_SECRET` a Worker secret).
 
 - **Join voice** in the sheet footer asks for the microphone, then becomes **Mute** / **Unmute**; a failure says why on the button.
-- Each page opens two peer connections, one publishing its microphone (the browser offers, the SFU answers) and one receiving (the SFU offers, the browser answers). Every SFU call goes page → Worker (`POST /api/voice/{session,publish,pull,renegotiate,close,leave}`, same-site and signed in, 120 a minute) → room → SFU. Only the room holds the secret; a page never sees another player's session.
-- **Who hears whom:** both players driving an Ooga within 16 of the pile (the fire's zone). The room recomputes it every tick, sends `voice { peers }` to a player when their list changes, and re-checks it on every `pull`, so a page cannot pull a voice it may not hear. Each page closes whom it no longer should hear and pulls whom it newly should, one change at a time.
-- **Volume** follows the distance between the two Oogas: full within 6, easing to a floor of 0.15 by 32, so anyone the room lets you hear stays audible.
-- Sign-out and another tab taking over release the microphone; a reconnect (every deploy) rejoins voice on its own, since the room forgets sessions with the old socket.
+- **Who hears whom: the same place.** Players driving an Ooga hear each other while they are in the same place: out on the island, in HQ (every HQ entrance leads to the one HQ), or inside one cave. A player in a cave hears only others in that cave, and nobody outside hears them. Within a place every voice plays at the same volume, however far apart the Oogas stand. The page reports its place as `zone { name }` (`outside`, `hq`, `cave-<mouth id>`), from the hub's own cave tracking. A player not driving an Ooga, or in another scene, is out of voice.
+- Each page opens two peer connections, one publishing its microphone (the browser offers, the SFU answers) and one receiving (the SFU offers, the browser answers). Every SFU call goes page → Worker (`POST /api/voice/{session,publish,live,pull,renegotiate,close,leave}`, same-site and signed in, 120 a minute) → room → SFU. Only the room holds the secret; a page never sees another player's session.
+- A microphone is announced only after its publishing connection is up (`live`): pulling a publication before it connects fails. The room recomputes who hears whom every tick, sends `voice { peers }` when a list changes, and re-checks it on every `pull`, so a page cannot pull a voice it may not hear. Each page applies one change at a time; a failed change is retried once on a fresh receive session before the button says voice is unavailable.
+- Sign-out and another tab taking over release the microphone; a reconnect (every deploy) rejoins voice on its own.
+
+The place is reported by the page, as positions are; a tampered page could claim another place to listen there, but only as a signed-in player whose login the room knows.
 
 ## Banning
 

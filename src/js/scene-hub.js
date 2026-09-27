@@ -5978,7 +5978,6 @@
     // free: the landing view looks at the pile from farther out than the loop carries.
     const listener = crew.player ? crew.player.root.position : camera.target;
     pileSound.update(dt, listener.x, listener.z);
-    BL.voice.updateGains(listener.x, listener.z, BL.net.remotes);
     mempoolIsland.wildlife.update(dt, elapsed);
     // Sweep before any abyss equipment loss or respawn, including a whole-shaft fall in one step.
     if (!entering && !pilot.poseHeld && fallingPlayer && fallingPlayer === pilot.player
@@ -6088,10 +6087,22 @@
     pilot.possess(cave);
     if (crew.player === cave) hud.toast(`Welcome back, ${BL.characters.displayOf(character.handle)}: this Ooga is yours`);
   };
+  // The place the driven Ooga is in, as the room names it for voice: out on the island, HQ (every HQ
+  // entrance leads to the one HQ), or one cave by its mouth. Named once per opening, never per frame.
+  const zoneNames = [];
+  const zoneName = (index) => {
+    if (!index) return "outside";
+    if (!zoneNames[index]) {
+      const opening = CAMERA_OPENINGS[index - 1];
+      zoneNames[index] = opening.headquarters ? "hq" : `cave-${String(opening.id).toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 27)}`;
+    }
+    return zoneNames[index];
+  };
   // The room sees the Ooga this visitor drives, by name, and where its feet are; none when free roaming.
   const shareDrivenOoga = () => {
     const driven = crew.player;
     BL.net.setBody(driven ? driven.traits.name : null);
+    if (driven) BL.net.setZone(zoneName(playerCaveIndex));
     if (driven) BL.net.sendPose(driven.root.position.x, driven.root.position.y - driven.baseY, driven.root.position.z, driven.root.rotation.y);
   };
   const drawExtra = (ctx2d, project, drawBubble) => {

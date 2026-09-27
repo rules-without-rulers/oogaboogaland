@@ -9,7 +9,7 @@
   "use strict";
   const BL = window.BL = window.BL || {};
   const LOOP_S = 8, SEED = 0x0b1f17e, FADE_S = 0.05;
-  const NEAR = 5, FAR = 16, MASTER = 0.35;
+  const NEAR = 5, FAR = 16, MASTER = 0.175;
   const CRACKLES = 110, SNAPS = 9;
   const DRIFT_S = 0.25, DRIFT_CHECK_S = 2;
   const STORAGE_KEY = "oogaboogaland.audio";

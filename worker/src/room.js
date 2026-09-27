@@ -5,13 +5,13 @@
 // silent sockets, and one socket per player, where a newer one kicks the older with `replaced`.
 // Every claim on an Ooga passes `claimRefusal` against the cast the build writes (characters.gen.json).
 // Voice: the room alone talks to the Realtime SFU (the secret stays here), decides who hears whom
-// (`voicePeers`: both driving an Ooga near the pile) and re-checks it on every pull, so a page never
+// (`voicePeers`: both driving an Ooga in the same place) and re-checks it on every pull, so a page never
 // learns another player's session and cannot pull a voice it may not hear.
 
 import { DurableObject } from "cloudflare:workers";
 import {
   CLOSE_KICK, CLOSE_PROTOCOL, MAX_PLAYERS, MOVE_HZ, STALE_MS, SWEEP_MS, TICK_HZ,
-  VOICE_TRACK, castIndex, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken, voicePeers,
+  OUTSIDE, VOICE_TRACK, castIndex, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken, voicePeers,
 } from "./protocol.js";
 import { sfuClient } from "./sfu.js";
 import CAST_ROWS from "./characters.gen.json";
@@ -44,11 +44,11 @@ export class Room extends DurableObject {
   }
 
   record(ws, a) {
-    return { ws, voice: { pub: null, sub: null, track: null }, ...a, bucket: { tokens: MOVE_HZ, at: Date.now() }, seenAt: Date.now() };
+    return { ws, voice: { pub: null, sub: null, track: null }, zone: OUTSIDE, ...a, bucket: { tokens: MOVE_HZ, at: Date.now() }, seenAt: Date.now() };
   }
 
   attachment(p) {
-    return { id: p.id, login: p.login, display: p.display, body: p.body, x: p.x, y: p.y, z: p.z, yaw: p.yaw, voice: p.voice };
+    return { id: p.id, login: p.login, display: p.display, body: p.body, x: p.x, y: p.y, z: p.z, yaw: p.yaw, voice: p.voice, zone: p.zone };
   }
 
   view(p) {
@@ -125,6 +125,9 @@ export class Room extends DurableObject {
       if (!takeToken(p.bucket, MOVE_HZ, p.seenAt)) return;
       p.x = msg.x; p.y = msg.y; p.z = msg.z; p.yaw = msg.yaw;
       this.dirty = true;
+    } else if (msg.t === "zone") {
+      if (msg.name === p.zone) return;
+      p.zone = msg.name;
     } else if (msg.t === "body") {
       if (msg.name === p.body) return;
       const refusal = claimRefusal(CAST, p.login, msg.name, this.players.values());
@@ -210,8 +213,9 @@ export class Room extends DurableObject {
   }
 
   // /voice/<op> from the Worker, which checked the session and set x-player-id. Ops: session (a publish
-  // or receive session), publish (the mic's offer), pull (peers the room allows), renegotiate, close
-  // (dropped peers' tracks), leave (forget this player's sessions).
+  // or receive session), publish (the mic's offer), live (the publishing connection is up: only now is the
+  // mic announced, since pulling a publication before it connects fails), pull (peers the room allows),
+  // renegotiate, close (dropped peers' tracks), leave (forget this player's sessions).
   async voiceRequest(op, request) {
     const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
     if (!this.sfu) return json({ error: "voice is not configured" }, 503);
@@ -228,7 +232,7 @@ export class Room extends DurableObject {
         const kind = body.kind === "pub" ? "pub" : "sub";
         const { sessionId } = await this.sfu.newSession();
         p.voice[kind] = sessionId;
-        if (kind === "pub") p.voice.track = null;
+        if (kind === "pub") p.voice.track = p.voice.pending = null;
         p.ws.serializeAttachment(this.attachment(p));
         return json({ ok: true });
       }
@@ -240,9 +244,15 @@ export class Room extends DurableObject {
         });
         const t = res.tracks && res.tracks[0];
         if (!t || t.errorCode) return json({ error: (t && t.errorDescription) || "publish failed" }, 502);
-        p.voice.track = VOICE_TRACK;
+        p.voice.pending = VOICE_TRACK;
         p.ws.serializeAttachment(this.attachment(p));
         return json({ sessionDescription: res.sessionDescription });
+      }
+      if (op === "live") {
+        if (!p.voice.pub || !p.voice.pending) return json({ error: "nothing published" }, 400);
+        p.voice.track = p.voice.pending;
+        p.ws.serializeAttachment(this.attachment(p));
+        return json({ ok: true });
       }
       if (op === "pull") {
         if (!p.voice.sub || !Array.isArray(body.ids)) return json({ error: "bad pull" }, 400);
@@ -274,7 +284,7 @@ export class Room extends DurableObject {
         return json({ ok: true });
       }
       if (op === "leave") {
-        p.voice = { pub: null, sub: null, track: null };
+        p.voice = { pub: null, sub: null, track: null, pending: null };
         p.ws.serializeAttachment(this.attachment(p));
         return json({ ok: true });
       }

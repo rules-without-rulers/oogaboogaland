@@ -7,7 +7,8 @@
 // The room answers who else is on the island: `remotes` (id → { login, display, body, x, y, z, yaw }),
 // updated in place from its 15 Hz snapshots. A scene reports the Ooga the visitor drives with `setBody`
 // (null when none) and its feet and heading with `sendPose`, which throttles itself. A newer tab of the
-// same account kicks this one with `replaced`: it stops reconnecting until `rejoin`.
+// same account kicks this one with `replaced`: it stops reconnecting until `rejoin`. `setZone` reports
+// the place the driven Ooga is in (out on the island, HQ, a cave), which decides who hears whom.
 //
 // Who drives which Ooga, on the page served by the Worker (`mayDrive`; the room enforces the same
 // ownership through its own copy of the cast): a signed-in contributor drives only their own Ooga, and
@@ -17,7 +18,7 @@
 // The room's clock: `serverNow()` estimates it from the timestamps on `welcome` and `state`, keeping the
 // sample that arrived fastest (the least delayed), and `state.loopEpoch` is when the pile's shared
 // sound loop started, so every page can play the same moment of it.
-// Exports start, subscribe, dispose, login, logout, rejoin, setBody, sendPose, mayDrive, ownCharacter,
+// Exports start, subscribe, dispose, login, logout, rejoin, setBody, setZone, sendPose, mayDrive, ownCharacter,
 // serverNow, remotes and state.
 (() => {
   "use strict";
@@ -28,9 +29,9 @@
   const subscribers = new Set();
   const remotes = new Map();
   // room: "off" (signed out or no backend), "connecting", "live", or a kick that stopped it ("replaced", "full").
-  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null, loopEpoch: 0 };
+  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null, loopEpoch: 0, zone: "outside" };
   let ws = null, retry = 0, retryTimer = 0, pingTimer = 0, stopped = false;
-  let body = null, poseAt = 0, px = NaN, py = NaN, pz = NaN, pyaw = NaN;
+  let zone = "outside", body = null, poseAt = 0, px = NaN, py = NaN, pz = NaN, pyaw = NaN;
   let clockOffset = 0, clockKnown = false;
   // A server timestamp minus the arrival time is the true offset less the trip; the largest such
   // sample is the one that travelled fastest, so it is the best estimate yet.
@@ -63,6 +64,7 @@
   };
 
   const sendBody = () => send(JSON.stringify({ t: "body", name: body }));
+  const sendZone = () => send(JSON.stringify({ t: "zone", name: zone }));
 
   const upsert = (p) => {
     if (!p || !Number.isSafeInteger(p.id) || p.id === state.selfId) return;
@@ -101,6 +103,7 @@
       setRoom("live");
       // A reconnect picks up where the page is: the Ooga still driven and where it stands, and voice,
       // whose sessions the room forgot with the old socket.
+      sendZone();
       sendBody();
       BL.voice.restart();
       poseAt = 0;
@@ -206,6 +209,13 @@
     connect();
   };
 
+  // Where the driven Ooga is ("outside", "hq", "cave-<id>"): voice is shared within one place.
+  const setZone = (name) => {
+    if (name === zone) return;
+    zone = state.zone = name;
+    sendZone();
+  };
+
   const setBody = (name) => {
     if (name === body) return;
     body = name;
@@ -259,5 +269,5 @@
     close("off");
   };
 
-  BL.net = { start, subscribe, dispose, login, logout, rejoin, setBody, sendPose, mayDrive, ownCharacter, serverNow, remotes, state };
+  BL.net = { start, subscribe, dispose, login, logout, rejoin, setBody, setZone, sendPose, mayDrive, ownCharacter, serverNow, remotes, state };
 })();

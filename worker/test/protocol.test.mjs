@@ -82,20 +82,24 @@ test("who may drive which Ooga: owners only their own, others only while the own
   assert.equal(claimRefusal(cast, "visitor", null, room(["portlandhodl"])), null);
 });
 
-test("voice: players driving an Ooga near the pile hear each other; nobody else does", async () => {
-  const { voicePeers, VOICE_RADIUS } = await import("../src/protocol.js");
+test("voice: players driving an Ooga hear each other while in the same place; nobody else does", async () => {
+  const { voicePeers, parseClientMessage } = await import("../src/protocol.js");
   const on = { pub: "p", sub: "s", track: "mic" };
-  const p = (id, body, x, voice = on) => ({ id, body, x, z: 0, voice });
+  const p = (id, body, zone, voice = on) => ({ id, body, zone, voice });
   const players = [
-    p(1, "bc1gui", 2), p(2, "portlandhodl", -3), p(3, "w-s-bitcoin", VOICE_RADIUS + 1),
-    p(4, null, 1), p(5, "MrHodlX", 0, { pub: null, sub: "s", track: null }), p(6, "DrNeski", 1, { pub: "p", sub: null, track: "mic" }),
+    p(1, "bc1gui", "outside"), p(2, "portlandhodl", "outside"), p(3, "w-s-bitcoin", "cave-lab"),
+    p(4, null, "outside"), p(5, "MrHodlX", "outside", { pub: null, sub: "s", track: null }), p(6, "DrNeski", "outside", { pub: "p", sub: null, track: "mic" }),
+    p(7, "timechainb", "cave-lab"), p(8, "Tmmmemcee", "hq"),
   ];
   const peers = voicePeers(players);
   assert.deepEqual(peers.get(1), [2, 6]);
   assert.deepEqual(peers.get(2), [1, 6]);
-  assert.deepEqual(peers.get(3), [], "outside the zone hears nobody");
+  assert.deepEqual(peers.get(3), [7], "a cave hears only its own");
+  assert.deepEqual(peers.get(7), [3]);
+  assert.deepEqual(peers.get(8), [], "alone in HQ hears nobody outside it");
   assert.deepEqual(peers.get(4), [], "not driving an Ooga hears nobody");
   assert.deepEqual(peers.get(5), [1, 2, 6], "listening without a microphone is allowed");
   assert.deepEqual(peers.get(6), [], "no receiving session, nothing to hear");
-  assert.ok(![...peers.values()].some((ids) => ids.includes(3) || ids.includes(4) || ids.includes(5)), "only those in the zone with a microphone are heard");
+  assert.deepEqual(parseClientMessage('{"t":"zone","name":"cave-lab"}'), { t: "zone", name: "cave-lab" });
+  assert.equal(parseClientMessage('{"t":"zone","name":"Cave Lab!"}'), null);
 });

@@ -2,6 +2,7 @@
 //
 // Client → room:  { t: "pose", x, y, z, yaw }   the driven Ooga's feet and heading, at most MOVE_HZ
 //                 { t: "body", name }            the Ooga being driven, or null when driving none
+//                 { t: "zone", name }            where that Ooga is: "outside", "hq" or "cave-<id>"
 // Room → client:  welcome { you, players, tickHz, now, loopEpoch }, join { p }, leave { id, reason },
 //                 body { id, name }, state { now, ps: [id, x, y, z, yaw, ...] }, kick { reason },
 //                 release { name, reason }   the Ooga this socket claimed is not, or no longer, its to drive
@@ -18,6 +19,8 @@ export const BOUND_XZ = 160;
 export const BOUND_Y_MIN = -130;
 export const BOUND_Y_MAX = 100;
 export const BODY_NAME = /^[A-Za-z0-9_.-]{1,40}$/;
+export const ZONE_NAME = /^[a-z0-9-]{1,32}$/;
+export const OUTSIDE = "outside";
 // Close codes: 4000 follows a `kick` (replaced, stale, full); 4400 is a message the room cannot read.
 export const CLOSE_KICK = 4000;
 export const CLOSE_PROTOCOL = 4400;
@@ -45,6 +48,7 @@ export const parseClientMessage = (text) => {
     if (msg.name === null) return { t: "body", name: null };
     return typeof msg.name === "string" && BODY_NAME.test(msg.name) ? { t: "body", name: msg.name } : null;
   }
+  if (msg.t === "zone") return typeof msg.name === "string" && ZONE_NAME.test(msg.name) ? { t: "zone", name: msg.name } : null;
   return null;
 };
 
@@ -105,21 +109,18 @@ export const claimRefusal = (index, login, body, players) => {
   return null;
 };
 
-// Voice: who hears whom. A player is in the voice zone while driving an Ooga within VOICE_RADIUS of the
-// pile (the fire's zone); a listener in the zone with a receiving session hears every other player in
-// the zone with a published microphone. The room decides and re-checks it on every pull.
-export const VOICE_RADIUS = 16;
+// Voice: who hears whom. Players driving an Ooga hear each other at one volume while they are in the same
+// place: out on the island, in HQ, or inside one cave. A listener with a receiving session hears every
+// other player in its place with a published microphone. The room decides and re-checks it on every pull.
 export const VOICE_TRACK = "mic";
-
-export const inVoiceZone = (p) => !!p.body && Math.hypot(p.x, p.z) <= VOICE_RADIUS;
 
 /** Map of player id → sorted ids that player should hear. */
 export const voicePeers = (players) => {
   const out = new Map();
   for (const p of players) {
     const ids = [];
-    if (inVoiceZone(p) && p.voice && p.voice.sub) {
-      for (const q of players) if (q !== p && inVoiceZone(q) && q.voice && q.voice.track) ids.push(q.id);
+    if (p.body && p.voice && p.voice.sub) {
+      for (const q of players) if (q !== p && q.body && q.zone === p.zone && q.voice && q.voice.track) ids.push(q.id);
       ids.sort((a, b) => a - b);
     }
     out.set(p.id, ids);

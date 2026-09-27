@@ -4,17 +4,15 @@
 // negotiates in one direction only. Every SFU call goes through the Worker (`/api/voice/*`); the page
 // never holds credentials or another player's session. The room says whom to hear (`setPeers`, from its
 // `voice` message) and this module makes it so one change at a time, since a session's changes must be
-// serialised. Each remote voice plays on its own <audio> element, its volume set every frame from the
-// distance between the two Oogas (`updateGains`).
+// serialised. Each remote voice plays on its own <audio> element at one volume: the room lets a player
+// hear only those in the same place (out on the island, HQ, one cave), and within it everyone is equal.
 // `enable` must run inside the click that asks for the microphone; `toggle` is the footer's button.
-// Exports enable, toggle, restart, stop, setPeers, updateGains, subscribe, dispose and stats.
+// Exports enable, toggle, restart, stop, setPeers, subscribe, dispose, inspect and stats.
 (() => {
   "use strict";
   const BL = window.BL = window.BL || {};
   const ICE = { iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }], bundlePolicy: "max-bundle" };
-  const ICE_GATHER_MS = 1500;
-  // Full within NEAR of the speaker's Ooga, easing to FLOOR by FAR: anyone the room lets you hear stays audible.
-  const NEAR = 6, FAR = 32, FLOOR = 0.15;
+  const ICE_GATHER_MS = 1500, CONNECT_MS = 10000, RETRY_MS = 2000;
   const subscribers = new Set();
   const subs = new Map();
   const stats = { enabled: false, muted: false, joining: false, peers: 0, hearing: 0, error: "" };
@@ -38,6 +36,23 @@
     pc.addEventListener("icegatheringstatechange", onChange);
   });
 
+  // Pulling a publication before its connection is up fails, so the mic is announced only once connected.
+  const connected = (pc) => new Promise((resolve, reject) => {
+    if (pc.connectionState === "connected") return resolve();
+    const done = (ok) => {
+      window.clearTimeout(timer);
+      pc.removeEventListener("connectionstatechange", onChange);
+      if (ok) resolve();
+      else reject(new Error("voice connection failed"));
+    };
+    const onChange = () => {
+      if (pc.connectionState === "connected") done(true);
+      else if (pc.connectionState === "failed" || pc.connectionState === "closed") done(false);
+    };
+    const timer = window.setTimeout(() => done(false), CONNECT_MS);
+    pc.addEventListener("connectionstatechange", onChange);
+  });
+
   const api = async (op, body) => {
     const res = await fetch(`/api/voice/${op}`, {
       method: "POST",
@@ -51,6 +66,7 @@
   };
 
   const teardown = () => {
+    window.clearTimeout(retryTimer);
     for (const s of subs.values()) {
       s.el.pause();
       s.el.srcObject = null;
@@ -77,16 +93,9 @@
       await gathered(pubPc);
       const pub = await api("publish", { sdp: pubPc.localDescription.sdp, mid: tx.mid });
       await pubPc.setRemoteDescription(pub.sessionDescription);
-      await api("session", { kind: "sub" });
-      subPc = new RTCPeerConnection(ICE);
-      subPc.addEventListener("track", (e) => {
-        for (const s of subs.values()) {
-          if (s.mid !== e.transceiver.mid) continue;
-          s.el.srcObject = new MediaStream([e.track]);
-          s.el.play().catch(() => {});
-        }
-        countHearing();
-      });
+      await connected(pubPc);
+      await api("live");
+      await openReceiver();
       stats.enabled = true;
       setMuted(false);
       schedule();
@@ -96,6 +105,28 @@
     }
     stats.joining = false;
     emit();
+  };
+
+  // The receiving side: a fresh session and connection, every remote voice pulled into it anew. Also the
+  // recovery when the SFU refuses a pull on a receive session it calls disconnected.
+  const openReceiver = async () => {
+    for (const s of subs.values()) {
+      s.el.pause();
+      s.el.srcObject = null;
+    }
+    subs.clear();
+    if (subPc) subPc.close();
+    subPc = null;
+    await api("session", { kind: "sub" });
+    subPc = new RTCPeerConnection(ICE);
+    subPc.addEventListener("track", (e) => {
+      for (const s of subs.values()) {
+        if (s.mid !== e.transceiver.mid) continue;
+        s.el.srcObject = new MediaStream([e.track]);
+        s.el.play().catch(() => {});
+      }
+      countHearing();
+    });
   };
 
   const setMuted = (on) => {
@@ -134,8 +165,26 @@
     schedule();
   };
 
+  // A failed change is tried once more after RETRY_MS on a fresh receive session (the SFU can call a new
+  // one disconnected) before the button says voice is unavailable; the room's next change tries again.
+  let retried = false, retryTimer = 0;
   const schedule = () => {
-    queue = queue.then(apply).catch(() => {
+    queue = queue.then(apply).then(() => {
+      retried = false;
+      if (!stats.error) return;
+      stats.error = "";
+      emit();
+    }, () => {
+      if (!stats.enabled) return;
+      if (!retried) {
+        retried = true;
+        window.clearTimeout(retryTimer);
+        retryTimer = window.setTimeout(() => {
+          queue = queue.then(openReceiver).catch(() => {});
+          schedule();
+        }, RETRY_MS);
+        return;
+      }
       stats.error = "voice unavailable";
       emit();
     });
@@ -167,7 +216,6 @@
         if (t.errorCode || t.id === null) continue;
         const el = new Audio();
         el.autoplay = true;
-        el.volume = 0;
         subs.set(t.id, { mid: t.mid, el });
       }
       if (res.requiresImmediateRenegotiation && res.sessionDescription) {
@@ -193,19 +241,6 @@
     emit();
   };
 
-  /** Every frame from the scene: each voice fades with the distance between the listener and the speaker's Ooga. */
-  const updateGains = (x, z, remotes) => {
-    for (const [id, s] of subs) {
-      const rec = remotes.get(id);
-      if (!rec) {
-        s.el.volume = 0;
-        continue;
-      }
-      const t = Math.min(1, Math.max(0, (Math.hypot(rec.x - x, rec.z - z) - NEAR) / (FAR - NEAR)));
-      s.el.volume = Math.max(FLOOR, (1 - t) * (1 - t));
-    }
-  };
-
   const subscribe = (fn) => {
     subscribers.add(fn);
     return () => subscribers.delete(fn);
@@ -216,5 +251,8 @@
     subscribers.clear();
   };
 
-  BL.voice = { enable, toggle, restart, stop, setPeers, updateGains, subscribe, dispose, stats };
+  // For the feed panel and debugging: whom the room wants heard, whom this page pulled, and both connections.
+  const inspect = () => ({ desired: desired.slice(), pulled: [...subs.keys()], publish: pubPc ? pubPc.connectionState : "none", receive: subPc ? subPc.connectionState : "none" });
+
+  BL.voice = { enable, toggle, restart, stop, setPeers, subscribe, dispose, inspect, stats };
 })();
