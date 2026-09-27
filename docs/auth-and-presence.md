@@ -46,7 +46,7 @@ A signed-in visitor holds one WebSocket to `/room` for the page life. The Worker
 | client → room | `{ t: "body", name }` | the Ooga being driven, by name; `null` when free roaming or outside the hub |
 | client → room | `{ t: "pose", x, y, z, yaw }` | that Ooga's feet and heading, at most 15 a second from the page, 20 allowed |
 | client → room | `"ping"` every 10 s | answered `"pong"` without waking the room |
-| room → client | `welcome { you, players, tickHz, now }` | on connect: everyone else and their last pose |
+| room → client | `welcome { you, players, tickHz, now, loopEpoch }` | on connect: everyone else and their last pose |
 | room → client | `join { p }`, `leave { id, reason }`, `body { id, name }` | the roster changing |
 | room → client | `state { now, ps }` | 15 Hz while anything moved: `ps` is flat `id, x, y, z, yaw` runs |
 | room → client | `release { name, reason }` | a claim refused (`not-yours`, `owner-here`, `taken`, `unknown`) or an Ooga taken back by its arriving owner |
@@ -68,9 +68,15 @@ The page enforces all of it (`net.mayDrive`, checked by `pilot.possess` through 
 
 A second tab of the same account takes over: the first is kicked with `replaced`, stops reconnecting, and its sheet footer offers **Play here**. Every deploy drops every socket; pages reconnect on their own with backoff (0.5 s × 1.7, up to 15 s).
 
-## Sound and voice
+## The pile's sound
 
-Not built yet: the pile's shared, time-aligned sound loop and proximity voice over the Realtime SFU. `docs/net-inventory.md` records what the OBL-Audio prototype already proves.
+Everyone in the room hears the same fire at the pile at the same moment (`src/js/pile-audio.js`). The room stores the moment the loop started (`loopEpoch`, kept in Durable Object storage so a redeploy keeps the phase) and sends it in `welcome`; each page estimates the room's clock from the timestamps on `welcome` and `state` (`net.serverNow`) and plays the loop at `(serverNow - loopEpoch) mod 8 s`, re-seeking if it drifts past a quarter second. Two pages measured 32–35 ms apart.
+
+The sound is an eight-second crackle over an ember rumble, synthesized in Web Audio from a fixed seed, so the crackles fall at the same seconds on every machine: no audio file. It is full within 5 of the pile and gone by 16, heard from the driven Ooga, or from where the camera looks while roaming free. It plays only for signed-in visitors while the room is live, starts after the first click or key (browsers allow sound only after a gesture), and honours the page-wide mute (`oogaboogaland.audio`, which the games' M key sets).
+
+## Voice
+
+Not built yet: proximity voice over the Realtime SFU. `docs/net-inventory.md` records what the OBL-Audio prototype already proves.
 
 ## Banning
 

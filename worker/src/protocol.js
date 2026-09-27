@@ -2,7 +2,7 @@
 //
 // Client → room:  { t: "pose", x, y, z, yaw }   the driven Ooga's feet and heading, at most MOVE_HZ
 //                 { t: "body", name }            the Ooga being driven, or null when driving none
-// Room → client:  welcome { you, players, tickHz, now }, join { p }, leave { id, reason },
+// Room → client:  welcome { you, players, tickHz, now, loopEpoch }, join { p }, leave { id, reason },
 //                 body { id, name }, state { now, ps: [id, x, y, z, yaw, ...] }, kick { reason },
 //                 release { name, reason }   the Ooga this socket claimed is not, or no longer, its to drive
 // "ping" answers "pong" without waking the room (setWebSocketAutoResponse).

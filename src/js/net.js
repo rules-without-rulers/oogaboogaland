@@ -14,8 +14,11 @@
 // nobody else drives it while they are here; everyone else, signed in or not, drives an Ooga only while
 // its owner is away, nobody else holds it, and it is not working. Ownership keys on the GitHub login
 // alone (`github`, else the handle). A claim the room refuses, or an owner arriving, lands as `released`.
+// The room's clock: `serverNow()` estimates it from the timestamps on `welcome` and `state`, keeping the
+// sample that arrived fastest (the least delayed), and `state.loopEpoch` is when the pile's shared
+// sound loop started, so every page can play the same moment of it.
 // Exports start, subscribe, dispose, login, logout, rejoin, setBody, sendPose, mayDrive, ownCharacter,
-// remotes and state.
+// serverNow, remotes and state.
 (() => {
   "use strict";
   const BL = window.BL = window.BL || {};
@@ -25,9 +28,19 @@
   const subscribers = new Set();
   const remotes = new Map();
   // room: "off" (signed out or no backend), "connecting", "live", or a kick that stopped it ("replaced", "full").
-  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null };
+  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null, loopEpoch: 0 };
   let ws = null, retry = 0, retryTimer = 0, pingTimer = 0, stopped = false;
   let body = null, poseAt = 0, px = NaN, py = NaN, pz = NaN, pyaw = NaN;
+  let clockOffset = 0, clockKnown = false;
+  // A server timestamp minus the arrival time is the true offset less the trip; the largest such
+  // sample is the one that travelled fastest, so it is the best estimate yet.
+  const clockSample = (serverMs) => {
+    if (typeof serverMs !== "number") return;
+    const sample = serverMs - Date.now();
+    if (!clockKnown || sample > clockOffset) clockOffset = sample;
+    clockKnown = true;
+  };
+  const serverNow = () => Date.now() + clockOffset;
 
   const emit = () => {
     for (const fn of subscribers) fn(state);
@@ -70,6 +83,7 @@
       return;
     }
     if (msg.t === "state") {
+      clockSample(msg.now);
       const ps = msg.ps;
       for (let i = 0; i + 4 < ps.length; i += 5) {
         const rec = remotes.get(ps[i]);
@@ -78,6 +92,9 @@
       }
     } else if (msg.t === "welcome") {
       retry = 0;
+      clockKnown = false;
+      clockSample(msg.now);
+      state.loopEpoch = typeof msg.loopEpoch === "number" ? msg.loopEpoch : 0;
       state.selfId = msg.you.id;
       remotes.clear();
       for (const p of msg.players) upsert(p);
@@ -236,5 +253,5 @@
     close("off");
   };
 
-  BL.net = { start, subscribe, dispose, login, logout, rejoin, setBody, sendPose, mayDrive, ownCharacter, remotes, state };
+  BL.net = { start, subscribe, dispose, login, logout, rejoin, setBody, sendPose, mayDrive, ownCharacter, serverNow, remotes, state };
 })();

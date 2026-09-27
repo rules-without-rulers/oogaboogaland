@@ -22,6 +22,13 @@ export class Room extends DurableObject {
     this.dirty = false;
     this.tick = 0;
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    // The pile's sound loop started once, for good: every page plays it at (now - loopEpoch), so all
+    // hear the same crackle at the same moment. Stored, so a woken or redeployed room keeps the phase.
+    this.loopEpoch = 0;
+    ctx.blockConcurrencyWhile(async () => {
+      this.loopEpoch = (await ctx.storage.get("loopEpoch")) || Date.now();
+      await ctx.storage.put("loopEpoch", this.loopEpoch);
+    });
     // A woken room rebuilds its roster from the attachments its sockets carry.
     for (const ws of ctx.getWebSockets()) {
       const a = ws.deserializeAttachment();
@@ -82,7 +89,7 @@ export class Room extends DurableObject {
 
     const others = [];
     for (const o of this.players.values()) if (o !== p) others.push(this.view(o));
-    this.send(server, { t: "welcome", you: this.view(p), players: others, tickHz: TICK_HZ, now: Date.now() });
+    this.send(server, { t: "welcome", you: this.view(p), players: others, tickHz: TICK_HZ, now: Date.now(), loopEpoch: this.loopEpoch });
     this.broadcast({ t: "join", p: this.view(p) }, server);
     this.startTick();
     await this.ensureSweep();
