@@ -7282,8 +7282,29 @@
     shared.localOnline = localOnline;
     crew = shared.crew = crewMod.create(shared);
     remotes = BL.remotePlayers.create({ root, crew });
-    // Signed-in pages keep the crew in step: one runs it for everyone, the others follow its frames.
-    npcSync = BL.npcSync.create({ crew });
+    // Signed-in pages keep the crew in step: one runs it for everyone, the others follow its frames. The
+    // crew's effects, shots and work hooks pass through the sync, which notes them while this page hosts;
+    // a following page replays them into the same effects and gorillas.
+    npcSync = BL.npcSync.create({
+      crew, fx,
+      onPlan: (cave, site) => clankers && clankers.plan(cave, site),
+      onHit: (cave) => clankers && clankers.hit(cave),
+      onModelChange: (cave) => {
+        refreshMirrorObject(cave.root);
+        refreshObjectGuides();
+      },
+    });
+    shared.fx = npcSync.fx;
+    const workPlanned = shared.workPlanned, workHit = shared.workHit;
+    shared.workPlanned = (cave, site) => {
+      npcSync.recordPlan(cave, site);
+      return workPlanned(cave, site);
+    };
+    shared.workHit = (cave) => {
+      npcSync.recordHit(cave);
+      return workHit(cave);
+    };
+    shared.onShot = (cave, from, to) => npcSync.recordShot(cave, from, to);
     BL.net.setHub(true);
     for (const cave of crew.list) crew.setJetpackOwnership(cave, true, hubModels.jetpack(), hubModels.jetFlame());
     // Sani hosts the island on ordinary visits; explicit activity fixtures still exercise every state.
