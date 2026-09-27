@@ -81,3 +81,21 @@ test("who may drive which Ooga: owners only their own, others only while the own
   assert.equal(claimRefusal(cast, "visitor", "nobody-real", room()), "unknown");
   assert.equal(claimRefusal(cast, "visitor", null, room(["portlandhodl"])), null);
 });
+
+test("voice: players driving an Ooga near the pile hear each other; nobody else does", async () => {
+  const { voicePeers, VOICE_RADIUS } = await import("../src/protocol.js");
+  const on = { pub: "p", sub: "s", track: "mic" };
+  const p = (id, body, x, voice = on) => ({ id, body, x, z: 0, voice });
+  const players = [
+    p(1, "bc1gui", 2), p(2, "portlandhodl", -3), p(3, "w-s-bitcoin", VOICE_RADIUS + 1),
+    p(4, null, 1), p(5, "MrHodlX", 0, { pub: null, sub: "s", track: null }), p(6, "DrNeski", 1, { pub: "p", sub: null, track: "mic" }),
+  ];
+  const peers = voicePeers(players);
+  assert.deepEqual(peers.get(1), [2, 6]);
+  assert.deepEqual(peers.get(2), [1, 6]);
+  assert.deepEqual(peers.get(3), [], "outside the zone hears nobody");
+  assert.deepEqual(peers.get(4), [], "not driving an Ooga hears nobody");
+  assert.deepEqual(peers.get(5), [1, 2, 6], "listening without a microphone is allowed");
+  assert.deepEqual(peers.get(6), [], "no receiving session, nothing to hear");
+  assert.ok(![...peers.values()].some((ids) => ids.includes(3) || ids.includes(4) || ids.includes(5)), "only those in the zone with a microphone are heard");
+});

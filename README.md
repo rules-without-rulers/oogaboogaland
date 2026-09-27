@@ -37,6 +37,8 @@ Who drives which Ooga:
 
 Signed-in players also share the pile's fire: its crackle is played in step on every screen, so everyone standing there hears the same moment of it (after a first click or key; the games' M key mutes it too).
 
+Players driving an Ooga near the pile can also talk: **Join voice** at the foot of the panel asks for your microphone, then becomes **Mute**. You hear whoever else is driving near the pile, louder the closer their Ooga stands.
+
 Ownership goes by GitHub login, not by name. These rules apply on the signed-in site; the plain GitHub Pages build has no accounts and every Ooga is free there. How it works: `docs/auth-and-presence.md`.
 
 ## Timechain Sphere

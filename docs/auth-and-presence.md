@@ -49,6 +49,7 @@ A signed-in visitor holds one WebSocket to `/room` for the page life. The Worker
 | room → client | `welcome { you, players, tickHz, now, loopEpoch }` | on connect: everyone else and their last pose |
 | room → client | `join { p }`, `leave { id, reason }`, `body { id, name }` | the roster changing |
 | room → client | `state { now, ps }` | 15 Hz while anything moved: `ps` is flat `id, x, y, z, yaw` runs |
+| room → client | `voice { peers }` | the ids this player should hear, sent when the list changes |
 | room → client | `release { name, reason }` | a claim refused (`not-yours`, `owner-here`, `taken`, `unknown`) or an Ooga taken back by its arriving owner |
 | room → client | `kick { reason }`, then close 4000 | `replaced` (a newer tab), `stale` (30 s silent), `full` (32 players) |
 
@@ -76,7 +77,13 @@ The sound is an eight-second crackle over an ember rumble, synthesized in Web Au
 
 ## Voice
 
-Not built yet: proximity voice over the Realtime SFU. `docs/net-inventory.md` records what the OBL-Audio prototype already proves.
+Signed-in players near the pile can talk (`src/js/voice.js`, `worker/src/room.js`, `worker/src/sfu.js`), over the Cloudflare Realtime SFU app `oogaboogaland-demo` (`REALTIME_APP_ID` in `wrangler.jsonc`, `REALTIME_SECRET` a Worker secret).
+
+- **Join voice** in the sheet footer asks for the microphone, then becomes **Mute** / **Unmute**; a failure says why on the button.
+- Each page opens two peer connections, one publishing its microphone (the browser offers, the SFU answers) and one receiving (the SFU offers, the browser answers). Every SFU call goes page → Worker (`POST /api/voice/{session,publish,pull,renegotiate,close,leave}`, same-site and signed in, 120 a minute) → room → SFU. Only the room holds the secret; a page never sees another player's session.
+- **Who hears whom:** both players driving an Ooga within 16 of the pile (the fire's zone). The room recomputes it every tick, sends `voice { peers }` to a player when their list changes, and re-checks it on every `pull`, so a page cannot pull a voice it may not hear. Each page closes whom it no longer should hear and pulls whom it newly should, one change at a time.
+- **Volume** follows the distance between the two Oogas: full within 6, easing to a floor of 0.15 by 32, so anyone the room lets you hear stays audible.
+- Sign-out and another tab taking over release the microphone; a reconnect (every deploy) rejoins voice on its own, since the room forgets sessions with the old socket.
 
 ## Banning
 

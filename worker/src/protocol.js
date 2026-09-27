@@ -104,3 +104,25 @@ export const claimRefusal = (index, login, body, players) => {
   }
   return null;
 };
+
+// Voice: who hears whom. A player is in the voice zone while driving an Ooga within VOICE_RADIUS of the
+// pile (the fire's zone); a listener in the zone with a receiving session hears every other player in
+// the zone with a published microphone. The room decides and re-checks it on every pull.
+export const VOICE_RADIUS = 16;
+export const VOICE_TRACK = "mic";
+
+export const inVoiceZone = (p) => !!p.body && Math.hypot(p.x, p.z) <= VOICE_RADIUS;
+
+/** Map of player id → sorted ids that player should hear. */
+export const voicePeers = (players) => {
+  const out = new Map();
+  for (const p of players) {
+    const ids = [];
+    if (inVoiceZone(p) && p.voice && p.voice.sub) {
+      for (const q of players) if (q !== p && inVoiceZone(q) && q.voice && q.voice.track) ids.push(q.id);
+      ids.sort((a, b) => a - b);
+    }
+    out.set(p.id, ids);
+  }
+  return out;
+};

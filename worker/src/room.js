@@ -4,12 +4,16 @@
 // hibernatable sockets with attachments, a 15 Hz snapshot while anything moved, an alarm sweeping
 // silent sockets, and one socket per player, where a newer one kicks the older with `replaced`.
 // Every claim on an Ooga passes `claimRefusal` against the cast the build writes (characters.gen.json).
+// Voice: the room alone talks to the Realtime SFU (the secret stays here), decides who hears whom
+// (`voicePeers`: both driving an Ooga near the pile) and re-checks it on every pull, so a page never
+// learns another player's session and cannot pull a voice it may not hear.
 
 import { DurableObject } from "cloudflare:workers";
 import {
   CLOSE_KICK, CLOSE_PROTOCOL, MAX_PLAYERS, MOVE_HZ, STALE_MS, SWEEP_MS, TICK_HZ,
-  castIndex, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken,
+  VOICE_TRACK, castIndex, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken, voicePeers,
 } from "./protocol.js";
+import { sfuClient } from "./sfu.js";
 import CAST_ROWS from "./characters.gen.json";
 
 const CAST = castIndex(CAST_ROWS);
@@ -21,6 +25,8 @@ export class Room extends DurableObject {
     this.spawnSlot = 0;
     this.dirty = false;
     this.tick = 0;
+    this.sfu = sfuClient(env);
+    this.voiceSig = new Map();
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     // The pile's sound loop started once, for good: every page plays it at (now - loopEpoch), so all
     // hear the same crackle at the same moment. Stored, so a woken or redeployed room keeps the phase.
@@ -38,11 +44,11 @@ export class Room extends DurableObject {
   }
 
   record(ws, a) {
-    return { ws, ...a, bucket: { tokens: MOVE_HZ, at: Date.now() }, seenAt: Date.now() };
+    return { ws, voice: { pub: null, sub: null, track: null }, ...a, bucket: { tokens: MOVE_HZ, at: Date.now() }, seenAt: Date.now() };
   }
 
   attachment(p) {
-    return { id: p.id, login: p.login, display: p.display, body: p.body, x: p.x, y: p.y, z: p.z, yaw: p.yaw };
+    return { id: p.id, login: p.login, display: p.display, body: p.body, x: p.x, y: p.y, z: p.z, yaw: p.yaw, voice: p.voice };
   }
 
   view(p) {
@@ -63,6 +69,8 @@ export class Room extends DurableObject {
   }
 
   async fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path.startsWith("/voice/")) return this.voiceRequest(path.slice("/voice/".length), request);
     if (request.headers.get("upgrade") !== "websocket") return new Response("Expected WebSocket", { status: 426 });
     const who = playerFromHeaders(request.headers);
     if (!who) return new Response("Forbidden", { status: 403 });
@@ -146,6 +154,7 @@ export class Room extends DurableObject {
   drop(p, reason) {
     if (this.players.get(p.id) !== p) return;
     this.players.delete(p.id);
+    this.voiceSig.delete(p.id);
     this.broadcast({ t: "leave", id: p.id, reason });
     if (!this.players.size) this.stopTick();
   }
@@ -179,11 +188,101 @@ export class Room extends DurableObject {
   }
 
   snapshot() {
+    this.updateVoice();
     if (!this.dirty) return;
     this.dirty = false;
     const ps = [];
     for (const p of this.players.values()) ps.push(p.id, p.x, p.y, p.z, p.yaw);
     this.broadcast({ t: "state", now: Date.now(), ps });
+  }
+
+  // Tells each player whom to hear, only when that list changed.
+  updateVoice() {
+    if (!this.sfu) return;
+    const desired = voicePeers([...this.players.values()]);
+    for (const p of this.players.values()) {
+      const peers = desired.get(p.id) || [];
+      const sig = peers.join(",");
+      if ((this.voiceSig.get(p.id) ?? "") === sig) continue;
+      this.voiceSig.set(p.id, sig);
+      this.send(p.ws, { t: "voice", peers });
+    }
+  }
+
+  // /voice/<op> from the Worker, which checked the session and set x-player-id. Ops: session (a publish
+  // or receive session), publish (the mic's offer), pull (peers the room allows), renegotiate, close
+  // (dropped peers' tracks), leave (forget this player's sessions).
+  async voiceRequest(op, request) {
+    const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+    if (!this.sfu) return json({ error: "voice is not configured" }, 503);
+    const p = this.players.get(Number(request.headers.get("x-player-id")));
+    if (!p) return json({ error: "join the island first" }, 409);
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      // No body.
+    }
+    try {
+      if (op === "session") {
+        const kind = body.kind === "pub" ? "pub" : "sub";
+        const { sessionId } = await this.sfu.newSession();
+        p.voice[kind] = sessionId;
+        if (kind === "pub") p.voice.track = null;
+        p.ws.serializeAttachment(this.attachment(p));
+        return json({ ok: true });
+      }
+      if (op === "publish") {
+        if (!p.voice.pub || typeof body.sdp !== "string" || typeof body.mid !== "string") return json({ error: "bad publish" }, 400);
+        const res = await this.sfu.newTracks(p.voice.pub, {
+          sessionDescription: { type: "offer", sdp: body.sdp },
+          tracks: [{ location: "local", mid: body.mid, trackName: VOICE_TRACK }],
+        });
+        const t = res.tracks && res.tracks[0];
+        if (!t || t.errorCode) return json({ error: (t && t.errorDescription) || "publish failed" }, 502);
+        p.voice.track = VOICE_TRACK;
+        p.ws.serializeAttachment(this.attachment(p));
+        return json({ sessionDescription: res.sessionDescription });
+      }
+      if (op === "pull") {
+        if (!p.voice.sub || !Array.isArray(body.ids)) return json({ error: "bad pull" }, 400);
+        const allowed = new Set(voicePeers([...this.players.values()]).get(p.id) || []);
+        const tracks = [], idOf = new Map();
+        for (const id of body.ids.slice(0, 64)) {
+          const q = this.players.get(id);
+          if (!allowed.has(id) || !q || !q.voice.pub) continue;
+          tracks.push({ location: "remote", sessionId: q.voice.pub, trackName: q.voice.track });
+          idOf.set(q.voice.pub, id);
+        }
+        if (!tracks.length) return json({ tracks: [], requiresImmediateRenegotiation: false });
+        const res = await this.sfu.newTracks(p.voice.sub, { tracks });
+        return json({
+          tracks: (res.tracks || []).map((t) => ({ id: idOf.get(t.sessionId) ?? null, mid: t.mid, errorCode: t.errorCode })),
+          sessionDescription: res.sessionDescription,
+          requiresImmediateRenegotiation: !!res.requiresImmediateRenegotiation,
+        });
+      }
+      if (op === "renegotiate") {
+        if (!p.voice.sub || typeof body.sdp !== "string") return json({ error: "bad renegotiate" }, 400);
+        await this.sfu.renegotiate(p.voice.sub, body.sdp);
+        return json({ ok: true });
+      }
+      if (op === "close") {
+        if (!p.voice.sub || !Array.isArray(body.mids)) return json({ error: "bad close" }, 400);
+        const mids = body.mids.filter((m) => typeof m === "string").slice(0, 64);
+        if (mids.length) await this.sfu.closeTracks(p.voice.sub, mids);
+        return json({ ok: true });
+      }
+      if (op === "leave") {
+        p.voice = { pub: null, sub: null, track: null };
+        p.ws.serializeAttachment(this.attachment(p));
+        return json({ ok: true });
+      }
+      return json({ error: "unknown voice op" }, 404);
+    } catch (err) {
+      console.warn(`voice ${op} failed for ${p.id}: ${err.message}`);
+      return json({ error: "the voice service did not answer" }, 502);
+    }
   }
 
   async ensureSweep() {

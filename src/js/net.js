@@ -99,8 +99,10 @@
       remotes.clear();
       for (const p of msg.players) upsert(p);
       setRoom("live");
-      // A reconnect picks up where the page is: the Ooga still driven and where it stands.
+      // A reconnect picks up where the page is: the Ooga still driven and where it stands, and voice,
+      // whose sessions the room forgot with the old socket.
       sendBody();
+      BL.voice.restart();
       poseAt = 0;
       px = NaN;
     } else if (msg.t === "join") {
@@ -112,6 +114,8 @@
     } else if (msg.t === "body") {
       const rec = remotes.get(msg.id);
       if (rec) rec.body = typeof msg.name === "string" ? msg.name : null;
+    } else if (msg.t === "voice") {
+      if (Array.isArray(msg.peers)) BL.voice.setPeers(msg.peers);
     } else if (msg.t === "release") {
       state.released = { name: String(msg.name), reason: String(msg.reason) };
       emit();
@@ -131,6 +135,8 @@
       ws = null;
     }
     remotes.clear();
+    // Out of the room for good (signed out, another tab, full): voice goes with it.
+    if (room !== "connecting") BL.voice.stop();
     setRoom(room);
     if (!stopped && room === "connecting") schedule();
   };

@@ -832,6 +832,7 @@
       else if (b.dataset.action === "account-login") BL.net.login();
       else if (b.dataset.action === "account-logout") BL.net.logout();
       else if (b.dataset.action === "account-rejoin") BL.net.rejoin();
+      else if (b.dataset.action === "account-voice") BL.voice.toggle();
       else if (b === el.mode && !modeSelected) actionHandler && actionHandler("mode-preset", nextDetachedView());
       else actionHandler && actionHandler(b.dataset.action);
     });
@@ -1174,6 +1175,11 @@
     $("account-room").textContent = words;
     $("account-room").hidden = !me || !words;
     $("account-rejoin").hidden = !me || !ROOM_WORDS[room];
+    // Voice: join, then mute and unmute; a failure says why on the button until the next try.
+    const voice = BL.voice.stats, voiceButton = $("account-voice");
+    voiceButton.hidden = room !== "live";
+    voiceButton.textContent = voice.joining ? "Joining voice" : voice.error && !voice.enabled ? `Voice: ${voice.error}` : !voice.enabled ? "Join voice" : voice.muted ? "Unmute" : "Mute";
+    voiceButton.setAttribute("aria-pressed", String(voice.enabled && !voice.muted));
   };
   BL.hud = { create, renderIcon, signLettering, showAccount, STATE_LABELS, statusFor };
 })();

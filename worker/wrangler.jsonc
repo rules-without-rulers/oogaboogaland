@@ -29,8 +29,10 @@
 	"vars": {
 		// Local dev overrides both in .dev.vars (see .dev.vars.example).
 		"SITE_ORIGIN": "https://obl.ruleswithoutrulers.com",
-		"GITHUB_CLIENT_ID": "Ov23lig8Xi9sNWxUAZ7N"
-		// Secret, never here: `npx wrangler secret put GITHUB_CLIENT_SECRET`.
+		"GITHUB_CLIENT_ID": "Ov23lig8Xi9sNWxUAZ7N",
+		// Realtime SFU app `oogaboogaland-demo` (Realtime -> Serverless SFU), for voice.
+		"REALTIME_APP_ID": "74cbba2bb4927f9100391b0a3dfdafe9"
+		// Secrets, never here: `npx wrangler secret put GITHUB_CLIENT_SECRET` and `REALTIME_SECRET`.
 	},
 	"d1_databases": [
 		{
@@ -52,6 +54,15 @@
 			"namespace_id": "1001",
 			"simple": {
 				"limit": 10,
+				"period": 60
+			}
+		},
+		// Voice signalling per player: a join is four calls, each change of who is near one or two more.
+		{
+			"name": "VOICE_LIMITER",
+			"namespace_id": "1003",
+			"simple": {
+				"limit": 120,
 				"period": 60
 			}
 		},

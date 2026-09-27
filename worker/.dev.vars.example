@@ -8,3 +8,6 @@ SITE_ORIGIN=http://localhost:8787
 # The development OAuth App (callback http://localhost:8787/auth/callback).
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
+
+# Voice: the Realtime SFU app's App Secret (the App ID is in wrangler.jsonc). Without it voice says unavailable.
+REALTIME_SECRET=

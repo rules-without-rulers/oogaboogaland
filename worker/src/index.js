@@ -1,5 +1,6 @@
 // The Worker in front of Ooga Booga Land: the built page from static assets, GitHub sign-in under
-// /auth/*, the account API under /api/*, and /room, the island's live socket. Only those paths run
+// /auth/*, the account API under /api/*, voice signalling under /api/voice/*, and /room, the island's
+// live socket. Only those paths run
 // this code (`run_worker_first` in wrangler.jsonc); every other path is served straight from ../dist.
 
 import { handleApi } from "./api.js";
@@ -26,10 +27,23 @@ const handleRoom = async (request, env) => {
   return env.ROOM.getByName(ROOM_NAME).fetch(new Request(request, { headers }));
 };
 
+// Voice signalling: the room validates ownership and talks to the SFU with the secret.
+const handleVoice = async (request, env, url) => {
+  if (request.method !== "POST") return text("Method not allowed", 405);
+  if (!fromSite(request, env.SITE_ORIGIN)) return text("Forbidden", 403);
+  const found = await getSessionFromRequest(request, env);
+  if (!found) return text("Sign in first", 401);
+  if (!(await allowed(env.VOICE_LIMITER, String(found.player.id)))) return text("Too many voice requests", 429);
+  const op = url.pathname.slice("/api/voice/".length);
+  const headers = new Headers({ "content-type": "application/json", "x-player-id": String(found.player.id) });
+  return env.ROOM.getByName(ROOM_NAME).fetch(new Request(new URL(`/voice/${op}`, url), { method: "POST", headers, body: request.body }));
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/auth/")) return handleAuth(request, env, url);
+    if (url.pathname.startsWith("/api/voice/")) return handleVoice(request, env, url);
     if (url.pathname.startsWith("/api/")) return handleApi(request, env, url);
     if (url.pathname === "/room") return handleRoom(request, env);
     return env.ASSETS.fetch(request);
