@@ -2,7 +2,8 @@
 // body gets a caveman built from that Ooga's traits (`models.caveman`, geometry shared with the crew's),
 // eased toward the room's 15 Hz poses with a walk cycle while it moves, and a nameplate. The crew's own
 // copy of that Ooga is sent `away` while someone else drives it, so no Ooga stands twice, and comes back
-// when they let go. The crew walks round remote bodies through `actors`, its `outsideActors`.
+// when they let go; meanwhile its roster row shows the driver online (`remoteControlled`, the green dot).
+// The crew walks round remote bodies through `actors`, its `outsideActors`.
 // One pool per hub visit: `create` in enter, `dispose` in leave, before the crew's.
 (() => {
   "use strict";
@@ -27,6 +28,7 @@
       entry.hidden = cave;
       entry.hiddenOverride = cave.override;
       cave.override = "away";
+      cave.remoteControlled = true;
       crew.refreshStates();
     };
     const restoreLocal = (entry) => {
@@ -34,6 +36,7 @@
       if (!cave) return;
       entry.hidden = null;
       cave.override = entry.hiddenOverride;
+      cave.remoteControlled = false;
       // Settled in place: a walk back in from away assumes a work slot, and a chilling Ooga has none.
       crew.refreshStates(true);
     };

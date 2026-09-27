@@ -35,8 +35,6 @@ Who drives which Ooga:
 - **Everyone else** (signed in or not) may drive an Ooga only when its contributor is not signed in, nobody else is driving it, and it is not working (yellow in the roster). Resting and sleeping Oogas are free to borrow.
 - **Owners come first.** When a contributor signs in, their Ooga is handed back to them, and whoever was driving it lets go.
 
-Signed-in players also share the pile's fire: its crackle is played in step on every screen, so everyone standing there hears the same moment of it (after a first click or key; the games' M key mutes it too).
-
 Players driving an Ooga can also talk: **Join voice** at the foot of the panel asks for your microphone, then becomes **Mute**. You hear everyone driving an Ooga in the same place as you, all at the same volume: out on the island, in HQ, or inside the same cave. Step into a cave and you hear only who is in there with you.
 
 Ownership goes by GitHub login, not by name. These rules apply on the signed-in site; the plain GitHub Pages build has no accounts and every Ooga is free there. How it works: `docs/auth-and-presence.md`.

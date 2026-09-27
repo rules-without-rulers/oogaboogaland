@@ -56,7 +56,7 @@ A signed-in visitor holds one WebSocket to `/room` for the page life. The Worker
 
 Frames the room cannot read close with 4400; out-of-bounds poses and unknown types are ignored. The pure rules are in `worker/src/protocol.js` with their checks in `worker/test/`.
 
-On the island (`src/js/remote-players.js`), each remote visitor driving an Ooga appears as that Ooga with their name over it, eased toward the room's poses. The local crew's copy of the same Ooga steps `away` while someone else drives it and comes back when they let go, so no Ooga stands twice; the NPC crew keeps working and walks round remote bodies. A visitor who is free roaming or in another game is not shown.
+On the island (`src/js/remote-players.js`), each remote visitor driving an Ooga appears as that Ooga with their name over it, eased toward the room's poses. Its row in the Ooga Boogas panel shows the green online dot on every screen while it is driven, as it does for the Ooga this visitor drives. The local crew's copy of the same Ooga steps `away` while someone else drives it and comes back when they let go, so no Ooga stands twice; the NPC crew keeps working and walks round remote bodies. A visitor who is free roaming or in another game is not shown.
 
 ### Who drives which Ooga
 
@@ -71,6 +71,8 @@ The page enforces all of it (`net.mayDrive`, checked by `pilot.possess` through 
 A second tab of the same account takes over: the first is kicked with `replaced`, stops reconnecting, and its sheet footer offers **Play here**. Every deploy drops every socket; pages reconnect on their own with backoff (0.5 s × 1.7, up to 15 s).
 
 ## The pile's sound
+
+**Switched off for now (2026-09-27):** the page no longer loads `pile-audio.js` and the hub no longer creates it. The module and the room's `loopEpoch` stay, so turning it back on is its script tag in `src/index.html` and three lines in `scene-hub.js` (create with the remote pool, update with the listener each frame, dispose in `leave`). The description below is how it works when on.
 
 Everyone in the room hears the same fire at the pile at the same moment (`src/js/pile-audio.js`). The room stores the moment the loop started (`loopEpoch`, kept in Durable Object storage so a redeploy keeps the phase) and sends it in `welcome`; each page estimates the room's clock from the timestamps on `welcome` and `state` (`net.serverNow`) and plays the loop at `(serverNow - loopEpoch) mod 8 s`, re-seeking if it drifts past a quarter second. Two pages measured 32–35 ms apart.
 

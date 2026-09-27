@@ -786,8 +786,10 @@
       cave.parts.gun.visible = false;
       cave.yawn = 0;
     };
+    // Online (the green dot) is anyone driving this Ooga: this visitor, or a signed-in player elsewhere
+    // (`remoteControlled`, set by the hub's remote-player pool while it shows them).
     const refreshRosterRow = (cave) => {
-      hud.setRosterRow(cave.traits.name, cave.state, contributors.ageLabel(cave.contributor), cave.humanControlled);
+      hud.setRosterRow(cave.traits.name, cave.state, contributors.ageLabel(cave.contributor), cave.humanControlled || !!cave.remoteControlled);
     };
     let player = null;
     const magazineCount = (cave = player) => cave ? cave.weapon.spareAmmo.length : 0;
