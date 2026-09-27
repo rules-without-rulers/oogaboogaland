@@ -7,11 +7,13 @@
 // Voice: the room alone talks to the Realtime SFU (the secret stays here), decides who hears whom
 // (`voicePeers`: both driving an Ooga in the same place) and re-checks it on every pull, so a page never
 // learns another player's session and cannot pull a voice it may not hear.
+// NPCs: the room elects one page as host (`electHost`), relays its binary pose frames to every other
+// page showing the island, and keeps the latest frame for pages that arrive or come back.
 
 import { DurableObject } from "cloudflare:workers";
 import {
   CLOSE_KICK, CLOSE_PROTOCOL, MAX_PLAYERS, MOVE_HZ, STALE_MS, SWEEP_MS, TICK_HZ,
-  OUTSIDE, VOICE_TRACK, castIndex, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken, voicePeers,
+  NPC_FRAME_MAX, NPC_HZ, OUTSIDE, VOICE_TRACK, castIndex, electHost, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken, voicePeers,
 } from "./protocol.js";
 import { sfuClient } from "./sfu.js";
 import CAST_ROWS from "./characters.gen.json";
@@ -27,6 +29,8 @@ export class Room extends DurableObject {
     this.tick = 0;
     this.sfu = sfuClient(env);
     this.voiceSig = new Map();
+    this.hostId = 0;
+    this.lastNpc = null;
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     // The pile's sound loop started once, for good: every page plays it at (now - loopEpoch), so all
     // hear the same crackle at the same moment. Stored, so a woken or redeployed room keeps the phase.
@@ -40,15 +44,16 @@ export class Room extends DurableObject {
       const a = ws.deserializeAttachment();
       if (a) this.players.set(a.id, this.record(ws, a));
     }
+    this.hostId = electHost(this.players.values());
     if (this.players.size) this.startTick();
   }
 
   record(ws, a) {
-    return { ws, voice: { pub: null, sub: null, track: null }, zone: OUTSIDE, ...a, bucket: { tokens: MOVE_HZ, at: Date.now() }, seenAt: Date.now() };
+    return { ws, voice: { pub: null, sub: null, track: null }, zone: OUTSIDE, inHub: false, joinedAt: Date.now(), ...a, bucket: { tokens: MOVE_HZ, at: Date.now() }, npcBucket: { tokens: NPC_HZ, at: Date.now() }, seenAt: Date.now() };
   }
 
   attachment(p) {
-    return { id: p.id, login: p.login, display: p.display, body: p.body, x: p.x, y: p.y, z: p.z, yaw: p.yaw, voice: p.voice, zone: p.zone };
+    return { id: p.id, login: p.login, display: p.display, body: p.body, x: p.x, y: p.y, z: p.z, yaw: p.yaw, voice: p.voice, zone: p.zone, inHub: p.inHub, joinedAt: p.joinedAt };
   }
 
   view(p) {
@@ -57,7 +62,7 @@ export class Room extends DurableObject {
 
   send(ws, msg) {
     try {
-      ws.send(typeof msg === "string" ? msg : JSON.stringify(msg));
+      ws.send(typeof msg === "string" || msg instanceof ArrayBuffer ? msg : JSON.stringify(msg));
     } catch {
       // A socket closing under us is dropped by its close event.
     }
@@ -97,7 +102,7 @@ export class Room extends DurableObject {
 
     const others = [];
     for (const o of this.players.values()) if (o !== p) others.push(this.view(o));
-    this.send(server, { t: "welcome", you: this.view(p), players: others, tickHz: TICK_HZ, now: Date.now(), loopEpoch: this.loopEpoch });
+    this.send(server, { t: "welcome", you: this.view(p), players: others, tickHz: TICK_HZ, now: Date.now(), loopEpoch: this.loopEpoch, host: this.hostId });
     this.broadcast({ t: "join", p: this.view(p) }, server);
     this.startTick();
     await this.ensureSweep();
@@ -113,6 +118,10 @@ export class Room extends DurableObject {
   webSocketMessage(ws, message) {
     const p = this.byWs(ws);
     if (!p) return;
+    if (typeof message !== "string") {
+      this.npcFrame(p, message);
+      return;
+    }
     const msg = parseClientMessage(typeof message === "string" ? message : "");
     if (msg === false) {
       this.drop(p, "protocol");
@@ -125,6 +134,12 @@ export class Room extends DurableObject {
       if (!takeToken(p.bucket, MOVE_HZ, p.seenAt)) return;
       p.x = msg.x; p.y = msg.y; p.z = msg.z; p.yaw = msg.yaw;
       this.dirty = true;
+    } else if (msg.t === "hub") {
+      if (msg.on === p.inHub) return;
+      p.inHub = msg.on;
+      this.electHost();
+      // A page arriving on the island catches up with the NPCs at once rather than at the next frame.
+      if (p.inHub && p.id !== this.hostId && this.lastNpc) this.send(p.ws, this.lastNpc);
     } else if (msg.t === "zone") {
       if (msg.name === p.zone) return;
       p.zone = msg.name;
@@ -159,6 +174,7 @@ export class Room extends DurableObject {
     this.players.delete(p.id);
     this.voiceSig.delete(p.id);
     this.broadcast({ t: "leave", id: p.id, reason });
+    this.electHost();
     if (!this.players.size) this.stopTick();
   }
 
@@ -197,6 +213,25 @@ export class Room extends DurableObject {
     const ps = [];
     for (const p of this.players.values()) ps.push(p.id, p.x, p.y, p.z, p.yaw);
     this.broadcast({ t: "state", now: Date.now(), ps });
+  }
+
+  electHost() {
+    const id = electHost(this.players.values());
+    if (id === this.hostId) return;
+    this.hostId = id;
+    if (!id) this.lastNpc = null;
+    this.broadcast({ t: "host", id });
+  }
+
+  // A binary frame is the NPC host's poses: taken only from the current host, capped in size and rate,
+  // and relayed unchanged to every other page showing the island.
+  npcFrame(p, data) {
+    if (p.id !== this.hostId || !p.inHub) return;
+    if (!(data instanceof ArrayBuffer) || data.byteLength > NPC_FRAME_MAX) return;
+    if (!takeToken(p.npcBucket, NPC_HZ, Date.now())) return;
+    p.seenAt = Date.now();
+    this.lastNpc = data;
+    for (const q of this.players.values()) if (q !== p && q.inHub) this.send(q.ws, data);
   }
 
   // Tells each player whom to hear, only when that list changed.

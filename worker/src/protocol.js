@@ -3,9 +3,12 @@
 // Client → room:  { t: "pose", x, y, z, yaw }   the driven Ooga's feet and heading, at most MOVE_HZ
 //                 { t: "body", name }            the Ooga being driven, or null when driving none
 //                 { t: "zone", name }            where that Ooga is: "outside", "hq" or "cave-<id>"
+//                 { t: "hub", on }               this page shows the island and is visible (host candidates)
+//                 binary                         the NPC host's frame of every Ooga's pose, relayed as is
 // Room → client:  welcome { you, players, tickHz, now, loopEpoch }, join { p }, leave { id, reason },
 //                 body { id, name }, state { now, ps: [id, x, y, z, yaw, ...] }, kick { reason },
 //                 release { name, reason }   the Ooga this socket claimed is not, or no longer, its to drive
+//                 host { id }                who runs the NPCs now (0 for nobody); binary NPC frames from them
 // "ping" answers "pong" without waking the room (setWebSocketAutoResponse).
 
 export const TICK_HZ = 15;
@@ -23,6 +26,9 @@ export const ZONE_NAME = /^[a-z0-9-]{1,32}$/;
 export const OUTSIDE = "outside";
 // Close codes: 4000 follows a `kick` (replaced, stale, full); 4400 is a message the room cannot read.
 export const CLOSE_KICK = 4000;
+// NPC frames: the host sends about 10 a second; a frame of every Ooga's pose is a few kilobytes.
+export const NPC_FRAME_MAX = 16384;
+export const NPC_HZ = 20;
 export const CLOSE_PROTOCOL = 4400;
 
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
@@ -48,6 +54,7 @@ export const parseClientMessage = (text) => {
     if (msg.name === null) return { t: "body", name: null };
     return typeof msg.name === "string" && BODY_NAME.test(msg.name) ? { t: "body", name: msg.name } : null;
   }
+  if (msg.t === "hub") return typeof msg.on === "boolean" ? { t: "hub", on: msg.on } : null;
   if (msg.t === "zone") return typeof msg.name === "string" && ZONE_NAME.test(msg.name) ? { t: "zone", name: msg.name } : null;
   return null;
 };
@@ -126,4 +133,13 @@ export const voicePeers = (players) => {
     out.set(p.id, ids);
   }
   return out;
+};
+
+// NPC host: one page runs the Ooga crew for everyone and streams its poses; the others follow. The host is
+// the page longest in the room among those showing the island (`inHub`: in the hub scene and visible), so
+// it changes only when that page leaves, hides or closes. 0 when no page qualifies.
+export const electHost = (players) => {
+  let best = null;
+  for (const p of players) if (p.inHub && (!best || p.joinedAt < best.joinedAt || (p.joinedAt === best.joinedAt && p.id < best.id))) best = p;
+  return best ? best.id : 0;
 };

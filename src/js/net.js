@@ -15,10 +15,13 @@
 // nobody else drives it while they are here; everyone else, signed in or not, drives an Ooga only while
 // its owner is away, nobody else holds it, and it is not working. Ownership keys on the GitHub login
 // alone (`github`, else the handle). A claim the room refuses, or an owner arriving, lands as `released`.
+// The NPC host: the room elects one page showing the island (`setHub`, which also counts a hidden tab
+// out) to run the Oogas for everyone. `state.hostId` names it; the host sends its binary pose frames with
+// `sendNpc`, and every other page reads the latest one from `npcFrame` (with `state.npcVersion` counting).
 // The room's clock: `serverNow()` estimates it from the timestamps on `welcome` and `state`, keeping the
 // sample that arrived fastest (the least delayed), and `state.loopEpoch` is when the pile's shared
 // sound loop started, so every page can play the same moment of it.
-// Exports start, subscribe, dispose, login, logout, rejoin, setBody, setZone, sendPose, mayDrive, ownCharacter,
+// Exports start, subscribe, dispose, login, logout, rejoin, setBody, setZone, setHub, sendNpc, npcFrame, sendPose, mayDrive, ownCharacter,
 // serverNow, remotes and state.
 (() => {
   "use strict";
@@ -29,8 +32,9 @@
   const subscribers = new Set();
   const remotes = new Map();
   // room: "off" (signed out or no backend), "connecting", "live", or a kick that stopped it ("replaced", "full").
-  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null, loopEpoch: 0, zone: "outside" };
+  const state = { backend: false, me: null, started: false, room: "off", selfId: 0, online: 0, released: null, loopEpoch: 0, zone: "outside", hostId: 0, npcVersion: 0 };
   let ws = null, retry = 0, retryTimer = 0, pingTimer = 0, stopped = false;
+  let npcFrame = null, inHub = false, hubSent = null;
   let zone = "outside", body = null, poseAt = 0, px = NaN, py = NaN, pz = NaN, pyaw = NaN;
   let clockOffset = 0, clockKnown = false;
   // A server timestamp minus the arrival time is the true offset less the trip; the largest such
@@ -65,6 +69,13 @@
 
   const sendBody = () => send(JSON.stringify({ t: "body", name: body }));
   const sendZone = () => send(JSON.stringify({ t: "zone", name: zone }));
+  // What the room hears is "showing the island now": the hub scene, in a visible tab.
+  const sendHub = () => {
+    const on = inHub && !document.hidden;
+    if (on === hubSent || !ws || ws.readyState !== WebSocket.OPEN) return;
+    hubSent = on;
+    send(on ? '{"t":"hub","on":true}' : '{"t":"hub","on":false}');
+  };
 
   const upsert = (p) => {
     if (!p || !Number.isSafeInteger(p.id) || p.id === state.selfId) return;
@@ -77,6 +88,11 @@
   };
 
   const onMessage = (e) => {
+    if (e.data instanceof ArrayBuffer) {
+      npcFrame = e.data;
+      state.npcVersion++;
+      return;
+    }
     if (e.data === "pong" || typeof e.data !== "string") return;
     let msg;
     try {
@@ -97,6 +113,7 @@
       clockKnown = false;
       clockSample(msg.now);
       state.loopEpoch = typeof msg.loopEpoch === "number" ? msg.loopEpoch : 0;
+      state.hostId = Number.isSafeInteger(msg.host) ? msg.host : 0;
       state.selfId = msg.you.id;
       remotes.clear();
       for (const p of msg.players) upsert(p);
@@ -105,6 +122,8 @@
       // whose sessions the room forgot with the old socket.
       sendZone();
       sendBody();
+      hubSent = null;
+      sendHub();
       BL.voice.restart();
       poseAt = 0;
       px = NaN;
@@ -117,6 +136,9 @@
     } else if (msg.t === "body") {
       const rec = remotes.get(msg.id);
       if (rec) rec.body = typeof msg.name === "string" ? msg.name : null;
+    } else if (msg.t === "host") {
+      state.hostId = Number.isSafeInteger(msg.id) ? msg.id : 0;
+      emit();
     } else if (msg.t === "voice") {
       if (Array.isArray(msg.peers)) BL.voice.setPeers(msg.peers);
     } else if (msg.t === "release") {
@@ -138,6 +160,9 @@
       ws = null;
     }
     remotes.clear();
+    state.hostId = 0;
+    npcFrame = null;
+    hubSent = null;
     // Out of the room for good (signed out, another tab, full): voice goes with it.
     if (room !== "connecting") BL.voice.stop();
     setRoom(room);
@@ -156,6 +181,7 @@
     if (stopped || ws || !state.me) return;
     setRoom("connecting");
     ws = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/room`);
+    ws.binaryType = "arraybuffer";
     ws.onmessage = onMessage;
     ws.onopen = () => {
       pingTimer = window.setInterval(() => send("ping"), PING_MS);
@@ -216,6 +242,18 @@
     sendZone();
   };
 
+  // The hub says when it shows the island; a hidden tab stops counting until it is looked at again.
+  const setHub = (on) => {
+    inHub = on;
+    sendHub();
+  };
+  document.addEventListener("visibilitychange", sendHub);
+
+  // The host's frame of Oogas, sent as bytes (a typed array view is sent as just its own bytes).
+  const sendNpc = (view) => {
+    if (ws && ws.readyState === WebSocket.OPEN && state.hostId === state.selfId) ws.send(view);
+  };
+
   const setBody = (name) => {
     if (name === body) return;
     body = name;
@@ -263,11 +301,12 @@
   };
 
   const dispose = () => {
+    document.removeEventListener("visibilitychange", sendHub);
     stopped = true;
     window.clearTimeout(retryTimer);
     subscribers.clear();
     close("off");
   };
 
-  BL.net = { start, subscribe, dispose, login, logout, rejoin, setBody, setZone, sendPose, mayDrive, ownCharacter, serverNow, remotes, state };
+  BL.net = { start, subscribe, dispose, login, logout, rejoin, setBody, setZone, setHub, sendNpc, sendPose, mayDrive, ownCharacter, serverNow, remotes, state, get npcFrame() { return npcFrame; } };
 })();

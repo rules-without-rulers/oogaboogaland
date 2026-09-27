@@ -29,6 +29,8 @@ Around the rim: **EntropyLab** (11 o'clock), **Ooga Rally** (9), **Ooga Drop** (
 
 On https://obl.ruleswithoutrulers.com, **Sign in with GitHub** at the foot of the side panel to share the island. Signed-in players see each other: whoever drives an Ooga appears as that Ooga, moving live, with their name above it, while the rest of the crew keeps working around them. The panel shows how many are online. Opening the island in a second tab moves you there; the first tab offers **Play here** to move back.
 
+Signed-in players also share the crew: one player's page runs the Oogas for everyone, so each Ooga walks, works and sleeps in the same place on every screen. If that player leaves, another page takes over by itself.
+
 Who drives which Ooga:
 
 - **Contributors drive their own.** If your GitHub login is a contributor's in `src/characters/`, signing in hands you your own Ooga, and while you are signed in nobody else can drive it. Contributors drive only their own Ooga.

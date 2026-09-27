@@ -392,6 +392,8 @@
       }
     }];
     mark("pile");
+    // As in the hub: where accounts exist, driving shows online only for a signed-in visitor.
+    shared.localOnline = () => !BL.net.state.backend || !!BL.net.state.me;
     crew = shared.crew = crewMod.create(shared);
     mark("cavemen");
     crates = shared.crates = cratesMod.create(shared);

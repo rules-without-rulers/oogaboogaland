@@ -786,10 +786,12 @@
       cave.parts.gun.visible = false;
       cave.yawn = 0;
     };
-    // Online (the green dot) is anyone driving this Ooga: this visitor, or a signed-in player elsewhere
-    // (`remoteControlled`, set by the hub's remote-player pool while it shows them).
+    // Online (the green dot) is a player driving this Ooga: a signed-in player elsewhere (`remoteControlled`,
+    // set by the hub's remote-player pool while it shows them), or this visitor, when the scene's
+    // `localOnline` says this page counts (signed in, on a page with accounts); without it, any driver does.
     const refreshRosterRow = (cave) => {
-      hud.setRosterRow(cave.traits.name, cave.state, contributors.ageLabel(cave.contributor), cave.humanControlled || !!cave.remoteControlled);
+      const local = cave.humanControlled && (!ctx.localOnline || ctx.localOnline());
+      hud.setRosterRow(cave.traits.name, cave.state, contributors.ageLabel(cave.contributor), local || !!cave.remoteControlled);
     };
     let player = null;
     const magazineCount = (cave = player) => cave ? cave.weapon.spareAmmo.length : 0;
@@ -5475,14 +5477,16 @@
         s.attempted = false; s.targetYaw = 0;
         snapshotTraffic(cave);
       }
-      for (let i = 0; i < crewList.length; i++) spaceWalker(crewList[i]);
+      // A puppet (`cave.puppet`, set by npc-sync.js on a page following the room's NPC host) is posed from the
+      // network: no spacing and no AI of its own; everything else about it stays as it is.
+      for (let i = 0; i < crewList.length; i++) if (!crewList[i].puppet) spaceWalker(crewList[i]);
       if (dt > 0 && ctx.characterSupportAt) for (let i = 0; i < crewList.length; i++) {
         const cave = crewList[i];
         cave.riding.support = ctx.characterSupportAt(cave);
       }
       if (dt > 0) updateFireContacts();
       updateFireThreats();
-      for (let i = 0; i < crewList.length; i++) updateMember(crewList[i], dt);
+      for (let i = 0; i < crewList.length; i++) if (!crewList[i].puppet) updateMember(crewList[i], dt);
       updateStunGear(dt);
       syncMagazine();
       if (dt > 0) updateFireContacts();

@@ -103,3 +103,14 @@ test("voice: players driving an Ooga hear each other while in the same place; no
   assert.deepEqual(parseClientMessage('{"t":"zone","name":"cave-lab"}'), { t: "zone", name: "cave-lab" });
   assert.equal(parseClientMessage('{"t":"zone","name":"Cave Lab!"}'), null);
 });
+
+test("NPC host: the page longest in the room among those showing the island; nobody when none does", async () => {
+  const { electHost, parseClientMessage } = await import("../src/protocol.js");
+  const p = (id, joinedAt, inHub) => ({ id, joinedAt, inHub });
+  assert.equal(electHost([p(1, 100, true), p(2, 50, true), p(3, 10, false)]), 2);
+  assert.equal(electHost([p(1, 100, true), p(2, 100, true)]), 1, "a tie goes to the lower id");
+  assert.equal(electHost([p(1, 100, false)]), 0);
+  assert.equal(electHost([]), 0);
+  assert.deepEqual(parseClientMessage('{"t":"hub","on":true}'), { t: "hub", on: true });
+  assert.equal(parseClientMessage('{"t":"hub","on":"yes"}'), null);
+});

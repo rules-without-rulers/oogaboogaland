@@ -46,10 +46,13 @@ A signed-in visitor holds one WebSocket to `/room` for the page life. The Worker
 | client → room | `{ t: "body", name }` | the Ooga being driven, by name; `null` when free roaming or outside the hub |
 | client → room | `{ t: "pose", x, y, z, yaw }` | that Ooga's feet and heading, at most 15 a second from the page, 20 allowed |
 | client → room | `{ t: "zone", name }` | where that Ooga is: `outside`, `hq` or `cave-<id>`; voice is shared within one place |
+| client → room | `{ t: "hub", on }` | this page shows the island in a visible tab: it can host the NPCs and receives their frames |
+| client → room | binary | the NPC host's frame of Ooga poses (see The crew in step) |
 | client → room | `"ping"` every 10 s | answered `"pong"` without waking the room |
 | room → client | `welcome { you, players, tickHz, now, loopEpoch }` | on connect: everyone else and their last pose |
 | room → client | `join { p }`, `leave { id, reason }`, `body { id, name }` | the roster changing |
 | room → client | `state { now, ps }` | 15 Hz while anything moved: `ps` is flat `id, x, y, z, yaw` runs |
+| room → client | `host { id }` | the page that runs the NPCs now, 0 for none; binary frames from it follow |
 | room → client | `voice { peers }` | the ids this player should hear, sent when the list changes |
 | room → client | `release { name, reason }` | a claim refused (`not-yours`, `owner-here`, `taken`, `unknown`) or an Ooga taken back by its arriving owner |
 | room → client | `kick { reason }`, then close 4000 | `replaced` (a newer tab), `stale` (30 s silent), `full` (32 players) |
@@ -69,6 +72,18 @@ Every Ooga belongs to a contributor, and ownership keys on the GitHub login alon
 The page enforces all of it (`net.mayDrive`, checked by `pilot.possess` through the scene's `mayPossess`). The room enforces ownership and who holds what (`claimRefusal` in `worker/src/protocol.js`, over the cast `npm run build:dist` writes to `worker/src/characters.gen.json`), so a tampered page cannot take a contributor's Ooga; a refused claim answers `release { name, reason }` and is never shown to anyone. Whether an Ooga is working comes from activity the room does not see, so that rule is the page's alone. The rules apply only on the page served by the Worker; without a backend (GitHub Pages, the test suite) any Ooga can be driven as before.
 
 A second tab of the same account takes over: the first is kicked with `replaced`, stops reconnecting, and its sheet footer offers **Play here**. Every deploy drops every socket; pages reconnect on their own with backoff (0.5 s × 1.7, up to 15 s).
+
+## The crew in step
+
+Signed-in players on the island see the same Oogas doing the same things (`src/js/npc-sync.js`). Without it every page runs its own crew, and random choices and frame timing drift each page apart within seconds.
+
+- **One page runs the crew.** The room elects a host: the page longest in the room among those showing the island (the hub scene, in a visible tab; `{ t: "hub", on }` reports it). The room tells everyone with `host { id }` and hands over when the host leaves the hub, hides its tab or closes.
+- **The host streams poses.** Ten times a second it sends one binary frame with every Ooga nobody drives: a header (format, a signature of the crew's names, a count) and one record of floats per Ooga covering the root's position, rotation, quaternion, scale and visibility, the legs, arms, head (with its eyes open or closed) and torso. About 2 KB a frame for a dozen Oogas. The room takes frames only from the host (16 KB and 20 a second at most), relays them to every other page on the island, and keeps the latest for anyone arriving.
+- **Followers pose puppets.** On every other signed-in page those Oogas are puppets (`cave.puppet`): `crew.update` skips their AI, and npc-sync eases them toward the latest frame after the crew's update, snapping when one jumps far (into a bed, back from a fall). An Ooga someone drives is never a puppet: its driver's page runs it and the others show it as a remote player.
+- **Measured:** two and three pages on one machine kept every Ooga within 0.4 of the host's (0.05 on average); a host closing handed over within seconds and a new page followed the new host.
+- Visitors who are not signed in have no room and keep their own crew. No database is involved: the latest frame lives in the room's memory.
+
+**Not yet in step:** held gear (club and rifle positions, magazines, ammo, muzzle flash), one-off effects (banana shots, speech bubbles, sleep marks, dust and sparks) and the gorillas, which follow the Oogas' work; those come next. The banana pile level, donations and crates stay each page's own.
 
 ## The pile's sound
 
