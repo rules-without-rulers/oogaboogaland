@@ -81,6 +81,5 @@ Found / maintainer play-tests before marking the PR ready:
   walking and returning too. Check visual presence and private-card boundaries.
 
 Keep the existing browser STOP ledger in force. These are acceptance tasks for
-the maintainer, not authorization to retry a blocked browser session. Live
-deployment and encrypted recovery also require the checks in
-[poker-integration.md](poker-integration.md).
+the maintainer, not authorization to retry a blocked browser session. The live
+tables on the Cloudflare site are covered in [banana-poker.md](banana-poker.md).

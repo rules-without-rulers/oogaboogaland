@@ -1,65 +1,13 @@
-// Contract: the account gateway must never trust browser identity or expose its service credential.
+// Contract: the local encrypted-deck service binds keys to accounts, and its browser worker recovers a hand exactly.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 import { runInNewContext } from "node:vm";
-import { createPokerGateway } from "../src/poker.js";
 import { createPokerServer } from "../../server/poker/server.mjs";
 import { loadProtocol, source } from "../../server/poker/load.mjs";
 
 const site = "https://floor.example", env = { SITE_ORIGIN: site, POKER_SERVICE_URL: "https://relay.example", POKER_SERVICE_TOKEN: "ab".repeat(32) };
-const account = async () => ({ player: { id: 101, login: "player-one", display: "Player One" } });
-const request = (path, options = {}) => new Request(site + path, { ...options, headers: { origin: site, ...options.headers } });
-
-test("poker gateway derives identity and strips cookies and spoofed service headers", async () => {
-  let call;
-  const gateway = createPokerGateway(account, async (url, options) => {
-    call = { url: String(url), ...options };
-    return new Response('{"accepted":true}', { headers: { "content-type": "application/json", "set-cookie": "secret=bad", "x-player-id": "forged" } });
-  });
-  const response = await gateway(request("/poker/api/command", { method: "POST", body: "{}", headers: {
-    "content-type": "application/json", cookie: "session=private", authorization: "Bearer poker-session",
-    "x-poker-service-token": "forged", "x-player-id": "999", "x-player-login": "fake", "x-poker-instance": "cd".repeat(32),
-  } }), env);
-  assert.equal(response.status, 200);
-  assert.equal(call.url, "https://relay.example/poker/api/command");
-  assert.equal(call.redirect, "error");
-  assert.equal(call.headers.get("cookie"), null);
-  assert.equal(call.headers.get("x-player-id"), "101");
-  assert.equal(call.headers.get("x-player-login"), "player-one");
-  assert.equal(call.headers.get("x-player-display"), "Player%20One");
-  assert.equal(call.headers.get("x-poker-service-token"), env.POKER_SERVICE_TOKEN);
-  assert.equal(call.headers.get("authorization"), "Bearer poker-session");
-  assert.equal(response.headers.get("set-cookie"), null);
-  assert.equal(response.headers.get("x-player-id"), null);
-  assert.equal(response.headers.get("cache-control"), "no-store");
-});
-
-test("poker gateway fails closed on missing config, sign-out, wrong origin, unknown routes and oversized streaming bodies", async () => {
-  let calls = 0;
-  const forward = async () => { calls++; throw new Error("must not forward"); };
-  const gateway = createPokerGateway(account, forward);
-  assert.equal((await gateway(request("/poker/api/health"), {})).status, 503);
-  assert.equal((await createPokerGateway(async () => null, forward)(request("/poker/api/health"), env)).status, 401);
-  assert.equal((await gateway(request("/poker/api/health", { headers: { origin: "https://other.example" } }), env)).status, 403);
-  assert.equal((await gateway(request("/poker/api/admin"), env)).status, 404);
-  assert.equal((await gateway(request("/poker/api/session"), env)).status, 405);
-  assert.equal((await gateway(request("/poker/api/state?table=1&table=2"), env)).status, 400);
-  assert.equal((await gateway(request("/poker/api/state?redirect=https://other.example"), env)).status, 400);
-  assert.equal((await gateway(request("/poker/api/health"), { ...env, POKER_SERVICE_URL: "http://relay.example" })).status, 503);
-  assert.equal((await gateway(request("/poker/api/health"), { ...env, POKER_SERVICE_URL: site })).status, 503);
-  const body = new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(1024 * 1024)); controller.enqueue(new Uint8Array(1)); controller.close(); } });
-  assert.equal((await gateway(request("/poker/api/command", { method: "POST", headers: { "content-type": "application/json" }, body, duplex: "half" }), env)).status, 413);
-  assert.equal(calls, 0);
-});
-
-test("poker gateway rejects upstream HTML and redirects instead of delivering executable error pages", async () => {
-  for (const response of [new Response("bad", { headers: { "content-type": "text/html" } }), new Response(null, { status: 302, headers: { location: site } })]) {
-    const gateway = createPokerGateway(account, async () => response);
-    assert.equal((await gateway(request("/poker/worker.js"), env)).status, 502);
-  }
-});
 
 const C = loadProtocol().pokerCrypto;
 const proof = async identity => { const nonce = C.nonce(); return { publicKey: identity.publicKey, nonce, signature: await identity.sign("connect", nonce) }; };

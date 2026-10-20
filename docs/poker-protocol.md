@@ -42,13 +42,11 @@ shared play requires the service.
 
 ## Hosting and team integration
 
-The service binds to loopback by default for the anonymous local demo. The
-Cloudflare site has an optional authenticated same-origin gateway, enabled only
-when a Node service URL and shared secret are configured. See
-[poker-integration.md](poker-integration.md) for staging setup, account binding,
-encrypted browser checkpoints, table voice, failure handling and remaining
-validation. The Node process is still a single in-memory relay; service restarts
-reset tables and balances. Static GitHub Pages alone cannot execute it.
+The service binds to loopback by default for the anonymous local demo
+(`npm run poker:serve`). The Cloudflare site does not proxy it: its live tables are
+dealt by the `PokerDen` Durable Object (see [banana-poker.md](banana-poker.md)).
+The Node process is a single in-memory relay; service restarts reset tables and
+balances. Static GitHub Pages alone cannot execute it.
 
 
 ## Protocol
@@ -166,7 +164,6 @@ Obtain the verifier from a trusted source instead of relying solely on the host'
 | `src/js/poker-match.js` | Public state machine, signed record and replay. |
 | `src/js/poker-rules.js` | Local rules and sealed-position rules with exact refunds. |
 | `src/js/poker-recovery.js` | Account-scoped encrypted checkpoints and exclusive browser ownership. |
-| `worker/src/poker.js` | Authenticated same-origin gateway to the optional service. |
 | `src/js/poker-worker.js` | Private keys, transport, verification and authorized shares. |
 | `src/js/poker-live.js` | Main-thread worker bridge and views. |
 | `server/poker/server.mjs` | Service, long polling, queues, deadlines and limits. |
