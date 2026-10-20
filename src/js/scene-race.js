@@ -26,6 +26,8 @@
   const DEBUG = new URLSearchParams(location.search).has("debug");
   const rainParam = DEBUG ? new URLSearchParams(location.search).get("rain") : null;
   const hourParam = DEBUG ? parseFloat(new URLSearchParams(location.search).get("hour")) : NaN;
+  // draw=0 lines the field up in roster order instead of drawing it, so checks race the same rivals every run.
+  const drawParam = DEBUG ? new URLSearchParams(location.search).get("draw") : null;
   // Crowd swells for CROWD_SWELL seconds on a lap or a finish; the drift tiers are first taught with a notice.
   const CROWD_SWELL = 3;
   const SPARK = models.particleGeometry("#ffb13b", 0.08, 1);
@@ -53,6 +55,12 @@
   };
   // selection persists for the page's life: the garage remembers the last pick across visits.
   const selection = { racer: contributors.activeRoster[0]?.name || null, mount: "kart", track: "bay", mirror: false };
+  // A signed-in visitor with an Ooga races it, as they drive only it on the island; the picker is for the rest.
+  // Their Ooga must be in the cast this visit built, which the garage rows and the field are made from.
+  const ownRacer = () => {
+    const own = BL.net.ownCharacter();
+    return own && racers.all.some((r) => r.name === own.handle) ? own.handle : null;
+  };
   // Bests are kept per track, the mirrored ones under their own key.
   const bestKey = () => selection.mirror ? `${selection.track}-m` : selection.track;
 
@@ -61,12 +69,14 @@
   let home = "hub";
   let renderer, game, world, go, lootEnabled, testBananas, root, camera, hud, rhud, hooks, input, fx, controls, track, racers, items, audio, weather, agent;
   let phase = "garage", countdown = 0, accumulator = 0, sceneTime = 0, finishedAt = 0;
-  let stateTimer = 0, hintTimer = 0;
+  let stateTimer = 0, hintTimer = 0, unsubscribeAccount = null;
   // revAt is the countdown time the throttle was first held through; -1 while it is off.
   let revAt = -1, crowdSwell = 0, driftTaught = 0;
   const cam = { yaw: 0, offset: 0, dist: CHASE.dist, shake: 0, lookBack: false, x: 0, y: 0, z: 0, tx: 0, ty: 0, tz: 0, warm: false, garageYaw: 0, garageLift: 0 };
   const targets = [];
-  const cup = { active: false, round: 0, done: false, points: new Float32Array(contributors.activeRoster.length) };
+  // points is indexed by racer and sized to each visit's cast: a signed-in visitor's temporary Ooga joins the
+  // roster after this file loads.
+  const cup = { active: false, round: 0, done: false, points: null };
   const nearestTorches = new Float32Array(LIGHT_CAPACITY * 2);
   const raceScene = {
     id: "race", renderOpts: null, root: null, camera: null, input: null, debug: null, agent: null, agentControls: null,
@@ -85,7 +95,7 @@
     const rain = rainParam !== null ? rainParam === "1" : math.randomInt(100) < RAIN_CHANCE;
     const def = raceTrack.trackById(id), hours = raceTrack.THEMES[def.theme].hours;
     const hour = Number.isFinite(hourParam) ? hourParam : hours ? hours[math.randomInt(hours.length)] : null;
-    track = raceTrack.build(def, { renderer, detail, rain, spectators: !contributors.solo, slots: contributors.activeRoster.length, hour, mirror: selection.mirror });
+    track = raceTrack.build(def, { renderer, detail, rain, spectators: !contributors.solo, slots: Math.min(racersMod.FIELD, contributors.activeRoster.length), hour, mirror: selection.mirror });
     addChild(root, track.root);
     buildWeather();
     track.renderOpts.meshRigs = true;
@@ -180,7 +190,19 @@
     racers.setup({ track, playerName: selection.racer, playerMount: selection.mount, lapCount: track.laps });
     items.setTrack(track);
   };
+  // The garage holds the visitor to their own Ooga when they have one; true when that changed the pick.
+  const applyOwn = () => {
+    const own = ownRacer();
+    rhud.lockRacer(own);
+    if (!own || own === selection.racer) return false;
+    selection.racer = own;
+    return true;
+  };
+  // Back from a race the garage lines up freshly drawn rivals; a track picked in the garage keeps them, and
+  // Race again, the next track and every race of a cup run the same field.
   const toGarage = () => {
+    if (phase !== "garage") racers.draw();
+    applyOwn();
     phase = "garage";
     fx.clearParticles();
     cup.active = false;
@@ -733,6 +755,10 @@
     if (e.key === "l" || e.key === "L") demoTip(120000);
   };
   const onBlur = () => pause(true);
+  // The sign-in can answer once the garage is up; anywhere else the next garage applies it.
+  const accountChanged = () => {
+    if (phase === "garage" && applyOwn()) placeRacers();
+  };
 
   const enter = (ctx) => {
     ({ renderer, game, world, go, lootEnabled, testBananas } = ctx);
@@ -763,7 +789,8 @@
     agent = raceScene.agent = BL.agent.create({ groundAt: agentGround, form: "code" });
     addChild(root, agent.root);
     placeAgent();
-    racers = racersMod.create({ root, input, fx, game, track, renderer });
+    racers = racersMod.create({ root, input, fx, game, track, renderer, shuffle: drawParam !== "0" });
+    cup.points = new Float32Array(racers.all.length);
     mark("racers");
     items = raceItems.create({ root, racers, fx, track });
     items.setTrack(track);
@@ -800,8 +827,10 @@
       onHoverMove: (hit, p) => hud.tooltip.show(tooltipFor(hit), p.x, p.y, hit.owner.kind === "racer" ? hit.owner.racer.cave : null),
       onTap: (hit) => {
         if (hit && hit.owner.kind === "racer") {
-          if (phase === "garage") rhud.el.racers.querySelector(`[data-racer="${hit.owner.racer.name}"]`).click();
-          else fx.say(hit.owner.racer.cave, "Ooga busy!", 1.2);
+          const refused = phase === "garage" && ownRacer() ? BL.net.mayDrive(hit.owner.racer.name) : null;
+          if (phase !== "garage") fx.say(hit.owner.racer.cave, "Ooga busy!", 1.2);
+          else if (refused) fx.say(hit.owner.racer.cave, refused, 1.6);
+          else rhud.el.racers.querySelector(`[data-racer="${hit.owner.racer.name}"]`).click();
         }
       },
       onOrbit: (dx, dy) => {
@@ -850,8 +879,12 @@
       for (const cave of contributors.activeRoster) hud.setRosterRow(cave.name, contributors.stateFor(cave), contributors.ageLabel(cave));
       fx.trimPool();
     }, 6e4);
-    hintTimer = window.setTimeout(() => hud.hint(COARSE ? "Tap an Ooga, a ride and a track, then Race!" : "Pick an Ooga, a ride and a track, then Race! (Enter)"), 1200);
+    hintTimer = window.setTimeout(() => {
+      const pick = ownRacer() ? "a ride and a track" : "an Ooga, a ride and a track";
+      hud.hint(COARSE ? `Tap ${pick}, then Race!` : `Pick ${pick}, then Race! (Enter)`);
+    }, 1200);
     window.addEventListener("blur", onBlur);
+    unsubscribeAccount = BL.net.subscribe(accountChanged);
     Object.assign(raceScene, {
       root, camera, input,
       debug: {
@@ -900,6 +933,8 @@
     window.clearInterval(stateTimer);
     window.clearTimeout(hintTimer);
     window.removeEventListener("blur", onBlur);
+    unsubscribeAccount();
+    unsubscribeAccount = null;
     window.removeEventListener("pointerdown", onGesture);
     window.removeEventListener("keydown", onGesture);
     audio.dispose();
@@ -928,7 +963,7 @@
   };
   const liveGeometry = (set) => {
     agent.liveGeometry(set);
-    for (const r of racers.racers) set.add(r.cave.headOpen).add(r.cave.headClosed);
+    for (const r of racers.all) set.add(r.cave.headOpen).add(r.cave.headClosed);
   };
   const stats = () => {
     let nodes = 0;

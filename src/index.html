@@ -157,6 +157,7 @@
         <p data-scene="lab" hidden>EntropyLab cave</p>
         <p data-scene="factory" hidden>Lightning Factory</p>
         <p data-scene="bifrost" hidden>₿IFRÖST</p>
+        <p data-scene="timechain" id="sphere-subtitle" hidden>Timechain Sphere</p>
         <p data-scene="arcade" hidden>Ooga Arcade</p>
         <p data-scene="skee" hidden>Ooga Arcade · Thro-ball</p>
         <p data-scene="hoops" hidden>Ooga Arcade · Hoop Shot</p>
@@ -283,9 +284,12 @@
         <button type="button" class="leave" data-action="leave">Leave<span> cave</span></button>
       </nav>
       <nav class="presets" aria-label="DSB Land" data-scene="dsb" hidden>
-        <button type="button" data-action="dsb-lookout">Island overview</button>
-        <button type="button" data-action="reset-view">Walk</button>
+        <button type="button" data-action="dsb-lookout" title="Camera viewpoint · releases character control">Island overview</button>
         <button type="button" data-action="dsb-mute" id="dsb-mute" aria-pressed="false">Mute</button>
+      </nav>
+      <nav class="presets" aria-label="Timechain Sphere room" data-scene="timechain" hidden>
+        <span class="sphere-mode" id="sphere-mode" role="status"></span>
+        <button type="button" class="leave" data-action="leave">Leave<span> room</span></button>
       </nav>
       <nav class="presets" aria-label="₿IFRÖST" data-scene="bifrost" hidden>
         <button type="button" data-preset="core">Core</button>
@@ -365,19 +369,30 @@
           <span class="panel-chip" id="banana-source" data-tone="idle">Demo</span>
         </header>
         <div class="slab banana-slab">
-          <section class="banana-total" aria-label="Total bananas donated, all time">
+          <section class="banana-total" aria-label="Current banana value of all sats donated">
             <div class="banana-hero">
               <svg class="banana-hero-icon" viewBox="0 0 9 9" shape-rendering="crispEdges" aria-hidden="true">
-                <path fill="#211b14" d="M0 0h1v5H0zM2 0h1v2H2zM3 2h1v2H3zM4 4h1v1H4zM1 5h1v2H1zM5 5h1v1H5zM6 6h1v1H6zM2 7h2v1H2zM7 7h1v1H7zM4 8h4v1H4z" />
-                <path fill="#ffd84a" d="M1 2h2v2H1zM1 4h3v1H1zM2 5h3v1H2zM2 6h4v1H2zM4 7h3v1H4z" />
-                <path fill="#789a3b" d="M1 0h1v2H1z" />
+                <g id="banana-panel-glyph">
+                  <path fill="#211b14" d="M0 0h1v5H0zM2 0h1v2H2zM3 2h1v2H3zM4 4h1v1H4zM1 5h1v2H1zM5 5h1v1H5zM6 6h1v1H6zM2 7h2v1H2zM7 7h1v1H7zM4 8h4v1H4z" />
+                  <path fill="#ffd84a" d="M1 2h2v2H1zM1 4h3v1H1zM2 5h3v1H2zM2 6h4v1H2zM4 7h3v1H4z" />
+                  <path fill="#789a3b" d="M1 0h1v2H1z" />
+                </g>
               </svg>
-              <strong id="banana-total">0</strong>
-              <span class="banana-hero-label">bananas · all time</span>
+              <strong id="banana-total" title="All donated sats valued at the current BTCUSD price; 1 banana = $1">—</strong>
+              <span class="banana-hero-label">bananas · current value</span>
             </div>
             <dl class="banana-totals">
               <div><dt>Donations</dt><dd id="stat-donations">0</dd></div>
               <div><dt>Sats donated</dt><dd id="stat-sats">0</dd></div>
+            </dl>
+            <dl class="banana-rates" aria-label="Current Bitcoin and banana exchange rates">
+              <dt class="banana-rate-label" id="banana-rate-label" data-tone="wait">BTCUSD</dt>
+              <dd id="banana-btc-price">—</dd>
+              <dt class="banana-rate-label">1 banana = $1</dt>
+              <dd class="banana-exchange">
+                <svg class="banana-exchange-icon" viewBox="0 0 9 9" shape-rendering="crispEdges" role="img" aria-label="Banana"><use href="#banana-panel-glyph" /></svg>
+                <span>1</span><span id="banana-exchange">— sats</span>
+              </dd>
             </dl>
           </section>
           <section class="banana-board" aria-labelledby="banana-board-title">
@@ -437,16 +452,16 @@
         <span class="account" id="account" hidden>
           <span class="account-who">
             <span class="account-name" id="account-name" hidden></span>
-            <span class="account-room" id="account-room" hidden></span>
           </span>
           <span class="account-actions">
-            <button type="button" class="foot-button foot-primary" data-action="account-login" id="account-login">Sign in with GitHub</button>
+            <button type="button" class="foot-button foot-primary" data-action="account-login" id="account-login" aria-label="Contributor sign-in with GitHub" title="Contributors can sign in with GitHub to control their own Ooga and gorilla.">Contributor sign-in</button>
             <button type="button" class="foot-button foot-primary" data-action="account-rejoin" id="account-rejoin" hidden>Play here</button>
             <button type="button" class="foot-button" data-action="account-voice" id="account-voice" aria-pressed="false" hidden>Join voice</button>
             <button type="button" class="link" data-action="account-logout" id="account-logout" hidden>Sign out</button>
           </span>
         </span>
         <span class="sheet-foot-meta">
+          <span class="account-room" id="account-room" hidden></span>
           <span class="quality" id="quality" aria-live="polite"></span>
           <button type="button" class="link" data-action="reset">Reset demo</button>
         </span>
@@ -466,23 +481,15 @@
     <div class="equipment-hud" id="equipment-hud">
       <div class="weapon-equipment-row">
       <button type="button" class="mode-hud" id="destination-hud" data-action="mode-preset" data-selected="false"
-        aria-labelledby="detached-destination-name destination-hud-label" title="Ooga Booga Land destinations" hidden>
+        aria-labelledby="detached-destination-name destination-hud-label" title="Map · cycle destinations" hidden>
         <img class="freeroam-icon" id="freeroam-icon" alt="" aria-hidden="true">
-        <span class="detached-destinations" id="detached-destinations">
-          <span class="detached-dot" data-detached-preset="pile" title="Pile"></span>
-          <span class="detached-dot" data-detached-preset="lab" title="Lab"></span>
-          <span class="detached-dot" data-detached-preset="mirror" title="Mirror"></span>
-          <span class="detached-dot" data-detached-preset="underground" title="HQ"></span>
-          <span class="detached-dot" data-detached-preset="basement" title="Basement"></span>
-          <span class="detached-dot" data-detached-preset="mempool" title="Mempool"></span>
-        </span>
         <span class="detached-destination-name" id="detached-destination-name" aria-live="polite"></span>
-        <span id="destination-hud-label" hidden>Ooga Booga Land destinations. Select a dot or press to cycle places</span>
+        <span id="destination-hud-label" hidden>Map. Cycle destinations</span>
       </button>
       <button type="button" class="mode-hud" id="own-ooga-hud" data-action="mode-retake" data-selected="true"
-        aria-label="Return to your Ooga" title="Return to your Ooga" hidden>
+        aria-label="Return to your last character" title="Return to your last character" hidden>
         <canvas class="mode-face-icon" id="own-ooga-face-icon" width="48" height="48" aria-hidden="true"></canvas>
-        <span class="mode-health" id="own-ooga-health" role="progressbar" aria-label="Your Ooga's health" aria-valuemin="0" aria-valuemax="25" aria-valuenow="25"><span id="own-ooga-health-fill"></span></span>
+        <span class="mode-health" id="own-ooga-health" role="progressbar" aria-label="Last character's health" aria-valuemin="0" aria-valuemax="25" aria-valuenow="25"><span id="own-ooga-health-fill"></span></span>
       </button>
       <button type="button" class="mode-hud" id="mode-hud" data-action="mode-toggle" data-selected="false" data-shooter="false"
         aria-label="Character controls" title="Character controls" hidden>
@@ -671,8 +678,8 @@
         <div class="garage-head">
           <h2><span data-sign>Ooga Rally</span> <span class="garage-medal garage-cup" id="garage-cup" hidden></span>
           </h2>
-          <p class="help">Pick an Ooga, a ride and a track. Three laps against the crew, or all three tracks for the
-            Cup.</p>
+          <p class="help">Pick <span id="garage-pick-ooga">an Ooga, </span>a ride and a track. Three laps against the
+            crew, or all three tracks for the Cup.</p>
         </div>
         <div class="garage-columns">
           <div class="garage-col">
@@ -1496,6 +1503,22 @@
         <button type="button" data-action="leave">Exit Game</button>
       </section>
     </div>
+    <dialog class="modal donation-popup" id="donation-popup" aria-labelledby="donation-title">
+      <div class="panel-head">
+        <h2 id="donation-title"><span data-sign>Feed the Ooga Boogas</span></h2>
+        <button type="button" class="modal-close" id="donation-close" aria-label="Close donation">&times;</button>
+      </div>
+      <canvas id="donation-screen" width="400" height="400" tabindex="0" aria-label="Donation screen. Type an amount, press Enter to continue, A for your name and message, O for on-chain, C to copy, and Escape to go back."></canvas>
+      <div id="donation-fields">
+        <label class="field"><span>Donation handle</span><input id="donation-handle" type="text" maxlength="39" tabindex="-1" autocomplete="off" spellcheck="false" placeholder="anon"></label>
+        <label class="field"><span>Banana message (up to 280 characters)</span><input id="donation-message" type="text" maxlength="280" tabindex="-1" autocomplete="off" placeholder="Optional message"></label>
+        <div class="donation-details-actions">
+          <span id="donation-details-status" role="status"></span>
+        </div>
+      </div>
+      <p class="help">Pay with Lightning or on-chain. Your bananas arrive from the Factory when the payment confirms.</p>
+    </dialog>
+    <div id="factory-donation-fields" hidden></div>
     <dialog class="modal" id="feed" aria-label="Feed the Ooga Boogas">
       <div class="panel-head">
         <h2><span data-sign>Feed the Ooga Boogas</span></h2>
@@ -1503,23 +1526,14 @@
       </div>
       <canvas id="qr" width="0" height="0" aria-label="Donation QR code"></canvas>
       <p class="qr-url" id="qr-url"></p>
-      <div id="feed-kiosk" hidden>
-        <p class="help">Tips are paid with any Lightning wallet at the kiosk in the Lightning Factory, where the cooker
-          turns them into bananas.</p>
-        <p class="help" id="feed-account" hidden>Signed in with GitHub, your tips carry your name; signed out, they are
-          anonymous.</p>
-        <p class="help" id="feed-test" hidden>This is a test site: tips here are paid on a Bitcoin test network, with
-          coins that have no value.</p>
-      </div>
       <label class="field" id="handle-field"><span>Your handle</span><input id="handle" type="text" maxlength="39"
           autocomplete="off" spellcheck="false" placeholder="anon" autofocus></label>
-      <label class="field"><span>Banana message</span><input id="message" type="text" maxlength="80" autocomplete="off"
+      <label class="field"><span>Banana message (up to 280 characters)</span><input id="message" type="text" maxlength="280" autocomplete="off"
           placeholder="shown when your banana is eaten"></label>
       <div class="actions" id="feed-tips">
         <button type="button" data-action="tip">Tip 1.2K sats</button>
         <button type="button" data-action="tip-legendary">Tip 120K sats</button>
       </div>
-      <div class="actions feed-go" id="feed-go" hidden><button type="button" data-action="kiosk">Go to the kiosk</button></div>
       <p class="help" id="feed-help"><span id="feed-simulated">Payments are simulated in this build.</span><span
           id="crate-help" hidden> Crates drop at 1K, 5K, 21K and 100K sats.</span></p>
     </dialog>
@@ -1662,6 +1676,7 @@ Then run npm run build and ONLY=characters node test/run.mjs.</pre>
   <script src="js/gl-renderer.js"></script>
   <script src="js/canvas-renderer.js"></script>
   <script src="js/models.js"></script>
+  <script src="js/banana-icon.js"></script>
   <script src="js/convex.js"></script>
   <script src="js/terrain.js"></script>
   <script src="js/terrain-cutaway.js"></script>
@@ -1689,6 +1704,7 @@ Then run npm run build and ONLY=characters node test/run.mjs.</pre>
   <script src="js/characters.gen.js"></script>
   <script src="js/contributors.js"></script>
   <script src="js/donations.js"></script>
+  <script src="js/donation-rate.js"></script>
   <script src="js/mempool.js"></script>
   <script src="js/oogatron-live.js"></script>
   <script src="js/totem-feed.js"></script>
@@ -1725,10 +1741,10 @@ Then run npm run build and ONLY=characters node test/run.mjs.</pre>
   <script src="js/pool-water.js"></script>
   <script src="js/pool-paintings.js"></script>
   <script src="js/pool-wildlife.js"></script>
+  <script src="js/timechain-rooms.js"></script>
+  <script src="js/deferred.js"></script>
   <script src="js/timechain-models.js"></script>
-  <script src="js/timechain-beer.js"></script>
-  <script src="js/timechain-data.js"></script>
-  <script src="js/timechain-boards.js"></script>
+  <script src="js/timechain-gate.js"></script>
   <script src="js/solid-props.js"></script>
   <script src="js/breakables.js"></script>
   <script src="js/agent.js"></script>
@@ -1742,13 +1758,17 @@ Then run npm run build and ONLY=characters node test/run.mjs.</pre>
   <script src="js/clanker-rage.js"></script>
   <script src="js/clankers.js"></script>
   <script src="js/clanker-play.js"></script>
+  <script src="js/bca-models.js"></script>
   <script src="js/scene-hub.js"></script>
   <script src="js/scene-lab.js"></script>
   <script src="js/factory-feed.js"></script>
   <script src="js/factory-mock.js"></script>
   <script src="js/factory-kiosk.js"></script>
+  <script src="js/donation-popup.js"></script>
   <script src="js/factory-models.js"></script>
   <script src="js/factory-window.js"></script>
+  <script src="js/tess.js"></script>
+  <script src="js/hub-guide.js"></script>
   <script src="js/factory-greeter.js"></script>
   <script src="js/scene-factory.js"></script>
   <script src="js/arcade-models.js"></script>
@@ -1846,6 +1866,13 @@ Then run npm run build and ONLY=characters node test/run.mjs.</pre>
   <script src="js/bifrost-heimdall.js"></script>
   <script src="js/bifrost-window.js"></script>
   <script src="js/scene-bifrost.js"></script>
+  <script src="js/scene-timechain.js"></script>
+  <script src="js/timechain-beer.js" data-defer="timechain"></script>
+  <script src="js/timechain-data.js" data-defer="timechain"></script>
+  <script src="js/timechain-blocks.js" data-defer="timechain"></script>
+  <script src="js/timechain-charts.js" data-defer="timechain"></script>
+  <script src="js/timechain-room-models.js" data-defer="timechain"></script>
+  <script src="js/timechain-interior.js" data-defer="timechain"></script>
   <script src="js/routes.js"></script>
   <script src="js/router.js"></script>
   <script src="js/poker-rules.js"></script>

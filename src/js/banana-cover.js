@@ -220,7 +220,7 @@
       const t = camera.near / depth;
       return t < 1 && segmentClear(p.x + dx * t, p.y + dy * t, p.z + dz * t, x, y, z) && (!sceneVisibleAt || sceneVisibleAt(x, y, z));
     };
-    const prepare = (camera, actor) => {
+    const prepare = (camera, actor, feet = actor ? actor.root.position.y - actor.baseY : 0, bodyHeight = actor?.bodyHeight) => {
       activeCamera = camera;
       const p = camera.position, t = camera.target, length = Math.hypot(t.x - p.x, t.y - p.y, t.z - p.z);
       forward[0] = (t.x - p.x) / length; forward[1] = (t.y - p.y) / length; forward[2] = (t.z - p.z) / length;
@@ -231,8 +231,8 @@
       if (state.touchesPile) updateLighting(camera, reach);
       state.actorInPile = false;
       if (actor && core.visible) {
-        const a = actor.root.position, feet = a.y - actor.baseY;
-        state.actorInPile = intersectsBody(a.x, feet, a.z, actor.bodyHeight);
+        const a = actor.root.position;
+        state.actorInPile = intersectsBody(a.x, feet, a.z, bodyHeight);
       }
       state.cameraInPile = contains(p.x, p.y, p.z);
       // An outside eye can still cut the fruit with a near-plane corner.

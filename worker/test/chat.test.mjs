@@ -104,7 +104,7 @@ const host = (clock = Date, env = {}) => {
     .replace(/import\s+[\s\S]*?from\s+"[^"]+";/g, "")
     .replace("export class Room", "class Room") + "\nglobalThis.Room = Room;";
   const context = {
-    ...protocol, sfuClient, sha256Hex, getPlayer, CAST_ROWS: [{ handle: "YellowBrokeIt", github_login: "YellowBrokeIt" }],
+    ...protocol, sfuClient, sha256Hex, getPlayer, CAST_ROWS: [{ handle: "YellowBrokeIt", github_login: "YellowBrokeIt" }, { handle: "bc1gui", github_login: "ottoz0r" }],
     DurableObject: class { constructor(ctx, env) { this.ctx = ctx; this.env = env; } },
     WebSocketPair, Response, WebSocketRequestResponsePair: class {}, URL, Date: clock, Map, Set, setTimeout, clearTimeout, console,
   };
@@ -115,14 +115,131 @@ const host = (clock = Date, env = {}) => {
     storage: { get: async () => undefined, put: async () => {}, getAlarm: async () => 0, setAlarm: async () => {} },
   };
   const room = () => new context.Room(ctx, env);
-  const join = async (r, id, login, display) => {
+  const upgrade = (r, id, login, display, contributor = true) => r.fetch({ url: "https://island.invalid/room", headers: new Headers({ upgrade: "websocket", "x-player-id": String(id), "x-player-login": login, "x-player-display": display, "x-player-contributor": contributor ? "1" : "0" }) });
+  // Ordinary chat fixtures represent contributors vouched for by the Worker.
+  const join = async (r, id, login, display, contributor = true) => {
     const before = accepted.length;
-    await r.fetch({ url: "https://island.invalid/room", headers: new Headers({ upgrade: "websocket", "x-player-id": String(id), "x-player-login": login, "x-player-display": display }) });
+    await upgrade(r, id, login, display, contributor);
     return accepted[before];
   };
-  return { room, join };
+  return { room, join, upgrade, accepted };
 };
 const said = (ws) => ws.sent.filter((m) => m.t === "chat");
+
+test("room: only Ooga owners join; a curated alias is never another account's contributor fallback", async () => {
+  const { room, join, upgrade, accepted } = host(), r = room();
+  for (const [login, contributor] of [["guest", false], ["bc1gui", false], ["bc1gui", true]]) {
+    const response = await upgrade(r, 1, login, "Guest", contributor);
+    assert.equal(response.status, 403, login);
+    assert.equal(accepted.length, 0, "refusal happens before accepting a socket");
+    assert.equal(r.players.size, 0);
+  }
+  const owner = await join(r, 2, "YELLOWBROKEIT", "Yellow", false);
+  const aliasOwner = await join(r, 3, "OTTOZ0R", "Alias owner", false);
+  const temporary = await join(r, 4, "new-contributor", "New", true);
+  for (const ws of [owner, aliasOwner, temporary]) {
+    assert.equal(ws.sent[0].t, "welcome");
+    assert.equal(ws.closed, null);
+  }
+  await r.webSocketMessage(aliasOwner, JSON.stringify({ t: "body", name: "gorilla:bc1gui" }));
+  assert.equal(aliasOwner.store.body, "gorilla:bc1gui", "the curated GitHub owner controls the aliased pair");
+});
+
+test("room: contributors exclusively switch between their own bodies, including after tab replacement", async () => {
+  const { room, join } = host(), r = room();
+  const claim = (ws, name) => r.webSocketMessage(ws, JSON.stringify({ t: "body", name }));
+  const visitor = await join(r, 1, "visitor", "Visitor", true);
+  claim(visitor, "YellowBrokeIt");
+  assert.equal(r.players.get(1).body, null);
+  assert.ok(visitor.sent.some(m => m.t === "release" && m.name === "YellowBrokeIt" && m.reason === "not-yours"), "an absent owner's Ooga cannot be borrowed");
+  const owner = await join(r, 2, "YellowBrokeIt", "Yellow", false);
+  claim(owner, "YellowBrokeIt");
+  assert.equal(owner.store.body, "YellowBrokeIt");
+  claim(owner, "gorilla:YellowBrokeIt");
+  assert.equal(r.players.get(2).body, "gorilla:YellowBrokeIt");
+  assert.equal(owner.store.body, "gorilla:YellowBrokeIt");
+  assert.ok(visitor.sent.some(m => m.t === "body" && m.id === 2 && m.name === "gorilla:YellowBrokeIt"));
+  claim(visitor, "gorilla:YellowBrokeIt");
+  assert.equal(r.players.get(1).body, null);
+  assert.ok(visitor.sent.some(m => m.t === "release" && m.name === "gorilla:YellowBrokeIt" && m.reason === "not-yours"));
+  const next = await join(r, 2, "YellowBrokeIt", "Yellow", false);
+  assert.equal(owner.closed.reason, "replaced");
+  claim(next, "gorilla:YellowBrokeIt");
+  claim(owner, "YellowBrokeIt");
+  assert.equal(r.players.get(2).body, "gorilla:YellowBrokeIt", "the replaced socket cannot change the current driver's body");
+  claim(next, null);
+  assert.equal(next.store.body, null);
+  claim(visitor, "gorilla:YellowBrokeIt");
+  assert.equal(r.players.get(1).body, null, "detaching does not make a companion borrowable");
+  const temporary = await join(r, 3, "new-contributor", "New", true);
+  claim(temporary, "gorilla:new-contributor");
+  assert.equal(temporary.store.body, "gorilla:new-contributor", "only the Worker-vouched temporary owner can claim its companion");
+  claim(visitor, "gorilla:new-contributor");
+  assert.equal(r.players.get(1).body, null);
+  claim(temporary, "new-contributor");
+  assert.equal(temporary.store.body, "new-contributor", "the temporary contributor can switch back to its own Ooga");
+});
+
+test("room: waking evicts historical guests and restores bundled and vouched contributor sockets", async () => {
+  const { room, join } = host(), r = room();
+  const guest = await join(r, 1, "old-guest", "Old guest");
+  const owner = await join(r, 2, "YellowBrokeIt", "Yellow", false);
+  const temporary = await join(r, 3, "new-contributor", "New", true);
+  // Simulate an attachment written before contributor-only admission, holding a borrowed Ooga.
+  guest.store.contributor = false;
+  guest.store.body = "YellowBrokeIt";
+  for (const ws of [guest, owner, temporary]) {
+    ws.store.inHub = true;
+    ws.store.joinedAt = ws.store.id;
+    ws.sent.length = 0;
+  }
+  const woken = room();
+  assert.equal(guest.closed.reason, "revoked");
+  assert.ok(guest.sent.some(m => m.t === "kick" && m.reason === "revoked"));
+  assert.ok(!woken.players.has(1));
+  assert.equal(woken.hostId, 2, "an old guest cannot remain the NPC host");
+  for (const ws of [owner, temporary]) {
+    assert.ok(woken.players.has(ws.store.id));
+    assert.equal(ws.closed, null);
+    assert.ok(ws.sent.some(m => m.t === "leave" && m.id === 1), "surviving peers remove the historical guest");
+  }
+  await woken.webSocketMessage(temporary, chat("after the upgrade"));
+  assert.equal(said(owner).at(-1).text, "after the upgrade");
+});
+
+test("room: an old guest cannot submit chat, movement or NPC frames before the next sweep", async () => {
+  for (const message of [chat("guest line"), JSON.stringify({ t: "pose", x: 8, y: 0, z: 0, yaw: 0 }), new ArrayBuffer(16)]) {
+    const { room, join } = host(), r = room();
+    const guest = await join(r, 1, "old-guest", "Old guest");
+    const owner = await join(r, 2, "YellowBrokeIt", "Yellow", false);
+    r.players.get(1).contributor = false;
+    await r.webSocketMessage(guest, message);
+    assert.equal(guest.closed.reason, "revoked");
+    assert.ok(!r.players.has(1));
+    assert.equal(said(owner).length, 0);
+    assert.equal(r.dirty, false);
+    assert.equal(r.lastNpc, null);
+  }
+});
+
+test("room: the existing sweep removes a silent old guest even with fresh automatic pings", async () => {
+  const { room, join } = host(), r = room();
+  const guest = await join(r, 1, "old-guest", "Old guest");
+  const owner = await join(r, 2, "YellowBrokeIt", "Yellow", false);
+  r.players.get(1).contributor = false;
+  r.ctx.getWebSocketAutoResponseTimestamp = () => new Date();
+  const alarms = [];
+  r.ctx.storage.setAlarm = async at => alarms.push(at);
+  r.sweepAt = 0;
+  await r.alarm();
+  assert.equal(guest.closed.reason, "revoked");
+  assert.equal(owner.closed, null);
+  assert.ok(!r.players.has(1) && r.players.has(2));
+  assert.equal(alarms.length, 1, "only the existing sweep is rescheduled while a player remains");
+  r.webSocketClose(owner);
+  await r.alarm();
+  assert.equal(alarms.length, 1, "the empty room starts no idle sweep");
+});
 
 test("room: a joiner gets welcome then the held lines; a line goes to everyone, named by the session", async () => {
   const { room, join } = host();
@@ -364,6 +481,7 @@ test("room: operator ban and deleted account revoke open sockets at the existing
   await r.webSocketMessage(c, JSON.stringify({ t: "revoke", id: 1 }));
   assert.ok(r.players.has(1));
   rows.get(1).banned_at = 1; rows.delete(2);
+  r.sweepAt = 0;
   await r.alarm();
   assert.equal(a.closed.reason, "revoked"); assert.equal(b.closed.reason, "revoked");
   assert.equal(c.closed, null); assert.deepEqual(queries.sort(), [1, 2, 3]);
@@ -381,10 +499,12 @@ test("room: a failed ban read retries on the next alarm and preserves stale evic
   r.ctx.getWebSocketAutoResponseTimestamp = () => null;
   const active = await join(r, 1, "ooga", "Ooga"), stale = await join(r, 2, "old", "Old");
   r.players.get(2).seenAt -= protocol.STALE_MS + 1;
+  r.sweepAt = 0;
   await r.alarm();
   assert.equal(active.closed, null, "a database failure is not a ban");
   assert.equal(stale.closed.reason, "stale", "existing stale sweep still runs on database failure");
   failed = false;
+  r.sweepAt = 0;
   await r.alarm();
   assert.equal(active.closed.reason, "revoked");
 });

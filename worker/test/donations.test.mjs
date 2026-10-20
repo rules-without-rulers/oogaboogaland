@@ -3,7 +3,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { handleDonations } from "../src/donations.js";
+import { routeFixture } from "./routes.mjs";
+
+const { handleDonations } = routeFixture();
 
 const SITE = "https://site.test";
 const FAR = 4102444800;
@@ -59,6 +61,14 @@ test("a visitor who isn't signed in gives as nobody, and a note or an on-chain s
   assert.equal(DONATIONS.calls[0].args[1], null);
 });
 
+test("an old nonowner session cannot attach a signed-in donor identity to an invoice", async () => {
+  const routes = routeFixture({ cast: [] }), DONATIONS = binding();
+  const [request, url] = call("/donations/invoice", { headers: { ...json, cookie: "__Host-obl_session=tok" }, body: "{}" });
+  const response = await routes.handleDonations(request, { SITE_ORIGIN: SITE, DONATIONS, DB: db }, url);
+  assert.equal(response.status, 201);
+  assert.equal(DONATIONS.calls[0].args[1], null);
+});
+
 test("signed-out and signed-in viewers can open the donation socket, passing only WebSocket headers and the visitor's address", async () => {
   const DONATIONS = binding();
   const ws = { upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "k", "sec-websocket-version": "13", cookie: "__Host-obl_session=tok", "x-client": "1.1.1.1" };
@@ -86,4 +96,17 @@ test("another site, an unknown path, an oversized body, a missing binding and a 
   assert.equal((await handleDonations(big, { SITE_ORIGIN: SITE, DONATIONS: binding() }, bigUrl)).status, 413);
   assert.deepEqual(await answer("/donations/invoice", {}), [503, "closed"]);
   assert.deepEqual(await answer("/donations/invoice", { DONATIONS: binding(true), DB: db }), [503, "closed"]);
+});
+
+
+test("custom display handles and 280-character messages pass separately from account identity", async () => {
+  for (const cookie of ["", "__Host-obl_session=tok"]) {
+    const DONATIONS = binding(), body = { sats: 1000, handle: "custom-donor", message: "m".repeat(280) };
+    const [request, url] = call("/donations/invoice", { headers: { ...json, cookie }, body: JSON.stringify(body) });
+    const res = await handleDonations(request, { SITE_ORIGIN: SITE, DONATIONS, DB: db }, url);
+    assert.equal(res.status, 201);
+    const [passed, donor] = DONATIONS.calls[0].args;
+    assert.deepEqual(await passed.json(), body);
+    assert.deepEqual(donor, cookie ? { id: 4242, login: "ooga-dev" } : null);
+  }
 });

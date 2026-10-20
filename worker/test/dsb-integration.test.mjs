@@ -39,6 +39,25 @@ test("room broadcasts DSB zone changes, persists them and keeps ownership enforc
   assert.equal(room.view(player).zone, "dsb-svrn");
   assert.equal(attachment.zone, "dsb-svrn");
   assert.ok(sent.some(m => m.t === "zone" && m.id === 1 && m.name === "dsb-svrn"));
+  room.webSocketMessage(ws, JSON.stringify({ t: "body", name: "gorilla:YellowBrokeIt" }));
+  assert.equal(player.body, "gorilla:YellowBrokeIt");
+  assert.equal(attachment.body, player.body);
+  const g = [4, 1.8, 12.5, 1, -0.5, 0];
+  room.scheduleFlush = () => {};
+  room.webSocketMessage(ws, JSON.stringify({ t: "pose", x: -45, y: 55, z: -43, yaw: 0.7, g }));
+  assert.deepEqual(attachment.g, g);
+  assert.deepEqual(room.view(player).g, g, "late joiners see the companion's current climbing stance");
+  assert.equal(room.view(player).y, 55, "the room keeps an elevated companion pose");
+  room.snapshot();
+  const state = sent.filter(m => m.t === "state").at(-1);
+  assert.deepEqual(state.ps, [1, -45, 55, -43, 0.7], "legacy position records keep five fields");
+  assert.deepEqual(state.gs, [1, ...g]);
+  room.webSocketMessage(ws, JSON.stringify({ t: "pose", x: -45, y: 55, z: -43, yaw: 0.7, g: [5, 0, 12.5, 0, 0, 0] }));
+  assert.ok(room.dirty, "changing stance with no positional movement still schedules a snapshot");
+  room.webSocketMessage(ws, JSON.stringify({ t: "body", name: "YellowBrokeIt" }));
+  assert.equal(player.g, null, "switching back to the Ooga clears companion state");
+  room.webSocketMessage(ws, JSON.stringify({ t: "pose", x: -45, y: 40, z: -43, yaw: 0, g }));
+  assert.equal(player.g, null, "Ooga poses cannot install companion locomotion");
   room.webSocketMessage(ws, JSON.stringify({ t: "body", name: "someone-else" }));
   assert.equal(player.body, null);
   assert.ok(sent.some(m => m.t === "release" && m.reason === "not-yours"));
@@ -61,7 +80,7 @@ test("voice lists survive the room sleeping and follow a microphone published ag
   room.sfu = {};
   room.players = new Map(); room.chatBuckets = new Map();
   for (const id of [1, 2]) {
-    const p = room.record(sockets[id], { id, login: `p${id}`, display: `p${id}`, body: `ooga-${id}`, zone: "factory.hall", x: 0, y: 0, z: 0, yaw: 0 });
+    const p = room.record(sockets[id], { id, login: `p${id}`, display: `p${id}`, body: id === 1 ? "gorilla:ooga-1" : "ooga-2", g: id === 1 ? [4, 1.8, 12, 1, 0, 0] : null, zone: "factory.hall", x: 0, y: 0, z: 0, yaw: 0 });
     p.voice = { pub: `pub${id}`, sub: `sub${id}`, track: "mic", gen: 10 + id };
     room.players.set(id, p);
     sockets[id].serializeAttachment(room.attachment(p));
@@ -71,6 +90,8 @@ test("voice lists survive the room sleeping and follow a microphone published ag
   assert.deepEqual(last(1), { t: "voice", peers: [2], gens: [12] });
   // Asleep and woken: the room still knows what it sent, so nothing repeats...
   const woken = wake();
+  assert.equal(woken.players.get(1).body, "gorilla:ooga-1");
+  assert.deepEqual(woken.players.get(1).g, [4, 1.8, 12, 1, 0, 0], "hibernation preserves a companion's locomotion");
   const before = sockets[1].sent.length;
   woken.updateVoice();
   assert.equal(sockets[1].sent.length, before);
@@ -103,10 +124,10 @@ test("SFU stays unavailable without secrets and uses bounded upstream calls with
 // Regression: a table voice choice survives hibernation, but never a scene change.
 test("room scopes poker voice to Ember Den and clears it on departure", () => {
   const Room = roomClass(), room = Object.create(Room.prototype);
-  room.players = new Map(); room.sfu = {}; room.chatBuckets = new Map();
+  room.players = new Map(); room.chatBuckets = new Map(); room.sfu = {};
   let attachment;
   const ws = { deserializeAttachment: () => ({ id: 1 }), serializeAttachment: value => { attachment = value; }, send() {} };
-  const player = room.record(ws, { id: 1, login: "fixture", display: "Fixture", body: "fixture", zone: "outside" });
+  const player = room.record(ws, { id: 1, login: "YellowBrokeIt", display: "Fixture", body: "YellowBrokeIt", zone: "outside" });
   room.players.set(1, player);
   const send = message => room.webSocketMessage(ws, JSON.stringify(message));
   send({ t: "poker-voice", table: 2 }); assert.equal(player.pokerVoice, null);

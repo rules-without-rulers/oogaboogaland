@@ -1,5 +1,5 @@
-// Other signed-in visitors on the island, as the Oogas they drive. Each one in `BL.net.remotes` with a
-// body gets a caveman built from that Ooga's traits (`models.caveman`, geometry shared with the crew's),
+// Other signed-in visitors on the island, as the Oogas or gorillas they drive. Each one in `BL.net.remotes` with a
+// body gets a caveman built from that Ooga's traits or a managed gorilla rig,
 // eased toward the room's 15 Hz poses with a walk cycle while it moves, and a nameplate. The crew's own
 // copy of that Ooga is sent `away` while someone else drives it, so no Ooga stands twice, and comes back
 // when they let go; meanwhile its roster row shows the driver online (`remoteControlled`, the green dot).
@@ -19,8 +19,8 @@
   const SNAP = 8;
   const WALK_SPEED = 0.35;
   const NAME_FONT = "bold 11px ui-monospace, monospace";
-  // The crew keeps remote bodies at this height for walking round them.
-  const BODY_HEIGHT = 2.2;
+  // Preserve the existing Ooga footprint; gorillas expose their posed envelope.
+  const BODY_RADIUS = 0.3, BODY_HEIGHT = 2.2;
   // Nameplate parts, in CSS pixels: the health bar under the name, the 9-pixel speaker right of it.
   const BAR_W = 32, BAR_H = 4, BAR_GAP = 3, ICON_GAP = 4;
   const NAME_STROKE = "rgba(20, 14, 8, 0.85)", NAME_FILL = "#f3efe4", BAR_TRACK = "rgba(0, 0, 0, 0.55)";
@@ -35,20 +35,26 @@
 
   // The zones the hub itself reports, which share its coordinates: the island, its bridged lands and its caves
   // (`cave-<id>` for a mouth with no name of its own). Never a separate scene's zone, such as the Ember Den.
-  const ISLAND_ZONES = new Set(["outside", "sphere", "rainforest", "bifrost", "lab", "factory", "arcade", "mirror", "hq"]);
+  const ISLAND_ZONES = new Set(["outside", "sphere", "rainforest", "bifrost", "lab", "bca", "factory", "arcade", "mirror", "hq"]);
   const onIsland = (zone) => ISLAND_ZONES.has(zone) || typeof zone === "string" && zone.startsWith("cave-");
   const sameZone = (rec) => rec.zone === BL.net.state.zone;
 
   // `posed(cave, feetY)` lets the scene finish a body's pose once it stands where the room says: the hub sets a
   // swimmer's arms by it, from the position the pose transport already carries, with no simulation of its own.
-  const create = ({ root, crew = null, posed = null, visible = sameZone, hide = null }) => {
+  // A hub supplies its companion's style and hides its local copy through the gorilla hooks; other scenes
+  // use a basic managed rig. Both bodies share the room pose, nameplate and collision actor lifecycle.
+  const create = ({ root, crew = null, posed = null, visible = sameZone, hide = null, createGorilla = null, hideGorilla = null }) => {
     const net = BL.net;
     const bodies = new Map();
-    const actorPool = Array.from({ length: MAX }, () => ({ x: 0, y: 0, z: 0 }));
+    const actorPool = Array.from({ length: MAX }, () => ({ x: 0, y: 0, z: 0, radius: BODY_RADIUS, height: BODY_HEIGHT }));
     const actorList = [];
 
     // The crew's Ooga of this name goes away while a remote drives it; its own override comes back after.
     const hideLocal = (entry) => {
+      if (entry.gorilla) {
+        if (hideGorilla) hideGorilla(entry.name, true);
+        return;
+      }
       if (hide) hide(entry.name, true);
       if (!crew) return;
       const cave = crew.cavemen.get(entry.name);
@@ -60,6 +66,10 @@
       crew.refreshStates();
     };
     const restoreLocal = (entry) => {
+      if (entry.gorilla) {
+        if (hideGorilla) hideGorilla(entry.name, false);
+        return;
+      }
       if (hide) hide(entry.name, false);
       const cave = entry.hidden;
       if (!cave) return;
@@ -71,18 +81,28 @@
     };
 
     const build = (rec) => {
-      const cave = BL.models.caveman(BL.contributors.traitsFor(rec.body));
-      const parts = cave.parts;
-      for (const key of ["snack", "gun", "jetpack", "jetFlame"]) if (parts[key]) parts[key].visible = false;
+      const gorilla = rec.bodyKind === "gorilla" || rec.body.startsWith("gorilla:");
+      const decoded = rec.bodyName || (gorilla ? rec.body.slice(8) : rec.body);
+      // Claims are case-insensitive; scene maps use the contributor's canonical handle.
+      const owner = gorilla && BL.characters.get(decoded), name = owner ? owner.handle : decoded;
+      const cave = gorilla
+        ? (createGorilla && createGorilla(name, rec)) || BL.agent.create({ managed: true, groundAt: () => rec.y, x: rec.x, z: rec.z, heading: rec.yaw })
+        : BL.models.caveman(BL.contributors.traitsFor(name));
+      if (!gorilla) {
+        const parts = cave.parts;
+        for (const key of ["snack", "gun", "jetpack", "jetFlame"]) if (parts[key]) parts[key].visible = false;
+      }
       addChild(root, cave.root);
-      const entry = { id: rec.id, name: rec.body, cave, baseY: cave.root.position.y, x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, phase: 0, hidden: null, hiddenOverride: null };
+      const motion = gorilla ? { walkPhase: NaN, walkGait: "knuckle", climb: 0, climbStride: 0, climbDirection: 0, climbSide: 0, swim: 0, lab: false, labRunIn: false, office: false, officeRise: 0 } : null;
+      const entry = { id: rec.id, body: rec.body, name, gorilla, cave, motion, baseY: gorilla ? 0 : cave.root.position.y, x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, phase: 0, hidden: null, hiddenOverride: null };
       bodies.set(rec.id, entry);
       hideLocal(entry);
       return entry;
     };
 
     const drop = (entry) => {
-      removeChild(root, entry.cave.root);
+      if (entry.gorilla) entry.cave.dispose();
+      else removeChild(root, entry.cave.root);
       restoreLocal(entry);
       bodies.delete(entry.id);
     };
@@ -109,10 +129,28 @@
       cave.root.rotation.y = entry.yaw;
     };
 
+    const poseGorilla = (entry, rec, dt) => {
+      const g = rec.g, sleeping = !!(g && g[0] & 64), flags = sleeping ? 0 : g ? g[0] : 0, motion = entry.motion;
+      motion.walkGait = flags & 8 ? "gallop" : "knuckle";
+      motion.climb = flags & 4 ? 1 : 0;
+      motion.climbStride = g ? g[2] : 0;
+      motion.climbDirection = g ? g[3] : 0;
+      motion.climbSide = g ? g[4] : 0;
+      motion.swim = g && !sleeping ? g[5] : 0;
+      motion.lab = !!(flags & 16);
+      // The lab normally forces an upright pose; preserve the sender's explicit biped bit on its approach.
+      motion.labRunIn = !(flags & 2);
+      motion.office = !!(flags & 32);
+      motion.officeRise = flags & 2 ? 1 : 0;
+      const speed = sleeping ? 0 : g ? g[1] : Math.hypot(entry.dx, entry.dz) / Math.max(dt, 1e-3);
+      const lounge = sleeping ? g[3] < -0.5 ? "left" : g[3] > 0.5 ? "right" : "back" : "";
+      entry.cave.poseManaged(dt, entry.x, entry.y, entry.z, entry.yaw, speed, !!(flags & 1), !!(flags & 2), lounge, motion);
+    };
+
     const update = (dt) => {
       for (const entry of bodies.values()) {
         const rec = net.remotes.get(entry.id);
-        if (!rec || rec.body !== entry.name) drop(entry);
+        if (!rec || rec.body !== entry.body) drop(entry);
       }
       const k = 1 - Math.exp(-EASE * dt);
       let n = 0;
@@ -132,12 +170,17 @@
         entry.z += entry.dz;
         entry.yaw += Math.atan2(Math.sin(rec.yaw - entry.yaw), Math.cos(rec.yaw - entry.yaw)) * t;
         if (far) entry.dx = entry.dz = 0;
-        pose(entry, dt);
-        if (posed) posed(entry.cave, entry.cave.root.position.y - entry.baseY);
-        entry.cave.root.visible = visible(rec) && !(crew && crew.player && crew.player.traits.name === entry.name);
+        if (entry.gorilla) poseGorilla(entry, rec, dt);
+        else {
+          pose(entry, dt);
+          if (posed) posed(entry.cave, entry.cave.root.position.y - entry.baseY);
+        }
+        entry.cave.root.visible = visible(rec) && !(!entry.gorilla && crew && crew.player && crew.player.traits.name === entry.name);
         if (!entry.cave.root.visible) continue;
         const actor = actorPool[n++];
         actor.x = entry.x; actor.y = entry.y; actor.z = entry.z;
+        actor.radius = entry.gorilla ? entry.cave.bodyRadius : BODY_RADIUS;
+        actor.height = entry.gorilla ? entry.cave.bodyHeight : BODY_HEIGHT;
       }
       actorList.length = 0;
       for (let i = 0; i < n; i++) actorList.push(actorPool[i]);
@@ -158,7 +201,8 @@
       for (const entry of bodies.values()) {
         const rec = net.remotes.get(entry.id);
         if (!rec || !entry.cave.root.visible) continue;
-        const pos = project(entry.x, entry.y + entry.cave.traits.height * 2 + 0.35, entry.z);
+        const height = entry.gorilla ? entry.cave.bodyHeight : entry.cave.traits.height * 2;
+        const pos = project(entry.x, entry.y + height + 0.35, entry.z);
         if (!pos) continue;
         const x = Math.round(pos.x), y = Math.round(pos.y);
         ctx.strokeStyle = NAME_STROKE;
@@ -182,7 +226,10 @@
     };
 
     const liveGeometry = (set) => {
-      for (const entry of bodies.values()) set.add(entry.cave.headOpen).add(entry.cave.headClosed);
+      for (const entry of bodies.values()) {
+        if (entry.gorilla) entry.cave.liveGeometry(set);
+        else set.add(entry.cave.headOpen).add(entry.cave.headClosed);
+      }
     };
 
     const stats = () => ({ remotePlayers: actorList.length, reservedPlayers: bodies.size });

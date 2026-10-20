@@ -7,6 +7,8 @@
   const { clearTweens, tweenCount } = scene;
   const params = new URLSearchParams(location.search);
   const DEBUG = params.has("debug");
+  // Local play-tests can run the donation show without emitting a paid event or changing the tally.
+  const TEST_DONATIONS = params.get("testdonations") === "1" && ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
   // A game still being built sets `wip: true` on its scene and stays unregistered, so nothing can enter it
   // and its cave seals, unless the page opts in: ?wip=<scene id> opens that game and lands in it, wip=1 opens
   // every one. No debug needed, so anyone can play a shared link. Its saves are left alone for the day it opens.
@@ -75,6 +77,7 @@
   };
   showQuality();
   const game = gameMod.create({ catalog: models.SWAG });
+  window.BL.donationPopup = window.BL.donationPopup.create(game);
   window.BL.hud.setDonationStats(game.state);
   // world survives scene swaps: banana level, equipment ownership, and the Ooga handed from hub to scene.
   const world = { level: START_BANANAS, pilot: null, mirrorBroken: false };
@@ -180,11 +183,21 @@
     worldClock.dateTime = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
     clockSvg.setAttribute("aria-label", `${Number.isFinite(clockTime) || clockDaylen > 0 ? "Ooga Booga time" : "Local time"} ${text}`);
   };
+  // A scene may `prepare(place, ctx)` before it is built (the Timechain Sphere's rooms: their code, deferred on a
+  // hosted page, and whose visit it is). It answers null to go ahead, `{ scene, place }` to arrive there instead, or a
+  // promise of either; the screen holds dark until it settles, and a rejection fades back in where the visitor was.
+  const settle = (t, answer) => {
+    if (answer && typeof answer.then === "function") {
+      t.ready = false;
+      answer.then((redirect) => { t.redirect = redirect || null; t.ready = true; }, (error) => { t.failed = error || new Error("Not ready"); t.ready = true; });
+    } else t.redirect = answer || null;
+  };
   const go = (id, place = null, instant = false) => {
     const next = scenes[id];
     if (!next) throw new Error(`Unknown scene "${id}"`);
     if (transition) return false;
-    transition = { next, place, out: true, t: 0, instant };
+    transition = { next, place, out: true, t: 0, instant, ready: true, redirect: null, failed: null };
+    if (next.prepare) settle(transition, next.prepare(place, ctx));
     return true;
   };
   const router = routerMod.create(scenes, window.BL.routes, go);
@@ -193,11 +206,6 @@
     e.preventDefault();
     e.currentTarget.blur();
     if (active && active.id !== "hub") go("hub");
-  });
-  // In real mode the island's donation dialog sends a tip to the Lightning Factory's kiosk (hud.js closes the dialog):
-  // from any other scene to the Factory, which opens the kiosk on arrival; in the Factory its own `kiosk` action does.
-  document.querySelector('[data-action="kiosk"]').addEventListener("click", () => {
-    if (active && active.id !== "factory") go("factory", "kiosk");
   });
   const agentPlay = BL.agent.createPlay();
   const ctx = { renderer, canvas: sceneCanvas, overlay: overlayCanvas, game, world, go, lootEnabled: LOOT_ENABLED, testBananas: TEST_BANANAS, agentPlay, from: null, place: null };
@@ -269,10 +277,17 @@
     renderer.releaseUnused(liveGeometry());
     if (DEBUG && renderer.stats.records > live.size) throw new Error(`${next.id}: ${renderer.stats.records} GPU records for ${live.size} live geometries`);
   };
+  // Where a settled transition lands: its own scene, or where its preparation redirected it.
+  const landing = (t) => t.redirect ? { next: scenes[t.redirect.scene], place: t.redirect.place ?? null } : { next: t.next, place: t.place };
+  const abandon = () => {
+    window.BL.hud.toast("That place could not be opened · try again");
+    router.abandon();
+  };
   const stepTransition = (dt) => {
     if (transition.instant) {
-      const { next, place } = transition;
-      swap(next, place);
+      if (!transition.ready) return;
+      if (transition.failed) abandon();
+      else { const { next, place } = landing(transition); swap(next, place); }
       transition = null;
       fade = 0;
       return;
@@ -280,8 +295,9 @@
     transition.t += dt;
     if (transition.out) {
       fade = Math.min(1, transition.t / FADE);
-      if (fade < 1) return;
-      swap(transition.next, transition.place);
+      if (fade < 1 || !transition.ready) return;
+      if (transition.failed) abandon();
+      else { const { next, place } = landing(transition); swap(next, place); }
       transition.out = false;
       transition.t = 0;
       return;
@@ -378,6 +394,12 @@
       firstDraw = true;
       mark("drawn");
       openCurtain();
+      if (params.get("signin") === "contributor-required") {
+        window.BL.hud.toast("Sign-in is for contributors with their own Ooga. Keep exploring signed out.");
+        params.delete("signin");
+        const back = new URL(location.href); back.searchParams.delete("signin");
+        history.replaceState(history.state, "", back.pathname + back.search + back.hash);
+      }
     }
     if (!drawn && renderer.failure && !params.has("canvas2d")) {
       console.warn("WebGL2 programs failed, reloading with the Canvas 2D fallback", renderer.failure);
@@ -415,8 +437,7 @@
     if (!active) return;
     if (e.key === "Shift" && (e.code === "ShiftRight" || e.location === 2)) rightShift = true;
     if (e.repeat) return;
-    const typing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
-    if (typing || (e.target && e.target.closest && e.target.closest("dialog, #sheet"))) return;
+    if (window.BL.controls.uiKey(e)) return;
     const intro = openIntro();
     if (intro) {
       // Registered at boot, before any scene's controls, so this keeps the key from them too.
@@ -432,6 +453,15 @@
     if (konamiAt === KONAMI.length) {
       konamiAt = 0;
       feedPanel.toggle();
+    }
+    if (TEST_DONATIONS && key === "l" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (transition) return;
+      const shown = active.previewDonation && active.previewDonation();
+      window.BL.hud.toast(shown ? "Test donation animation · real totals unchanged"
+        : active.previewDonation ? "Waiting for the local donation backend" : "Enter the mainland or Lightning Factory to preview a donation");
+      return;
     }
     if (LOOT_ENABLED && e.shiftKey && (e.key === "Delete" || e.key === "Backspace")) {
       e.preventDefault();
@@ -532,6 +562,7 @@
     if (destroyed) return;
     if (net.state.donations) donations.useOrigin();
     unsubscribeDonations = donations.subscribe((donation, bananas) => {
+      window.BL.donationPopup.receive(donation, bananas);
       if (active) active.onDonation(donation, bananas);
       else game.recordDonation(donation, bananas && bananas.exact);
       window.BL.hud.setDonationStats(game.state);
@@ -541,6 +572,13 @@
       }
     }, {
       identity: () => game.state,
+      // An on-chain payment seen before its block: the active scene shows it where it can (the kiosk that made the
+      // invoice), and otherwise one the visitor left the kiosk waiting on says it is on its way, or what is still owed.
+      onSeen: (id, sats, due, left, pricing) => {
+        if (window.BL.donationPopup.seen(id, sats, due, left, pricing)) return;
+        if (active && active.onSeen && active.onSeen(id, sats, due, left, pricing)) return;
+        if (donations.waitingOn(id)) window.BL.hud.toast(left ? `Your on-chain tip arrived short · send ${gameMod.formatLarge(left)} more sats to the same address` : "Your on-chain tip is on its way · waiting for a block");
+      },
       onPile: ({ bananas, eatPerHour }) => Object.assign(pileFeed, { bananas, eatPerHour, at: performance.now() })
     });
   });
@@ -608,8 +646,20 @@
     // net.start is bounded; an unavailable backend leaves the static island usable.
     await accountReady;
     if (destroyed) return;
+    let first = Object.hasOwn(scenes, sceneId) ? scenes[sceneId] : scenes[Object.keys(scenes)[0]], place = routed && routed.place;
+    if (first.prepare) {
+      try {
+        const redirect = await first.prepare(place, ctx);
+        if (redirect) ({ next: first, place } = landing({ redirect }));
+      } catch {
+        first = scenes[Object.keys(scenes)[0]];
+        place = null;
+        window.BL.hud.toast("That place could not be opened · here is the island");
+      }
+      if (destroyed) return;
+    }
     const built = performance.now();
-    enter(Object.hasOwn(scenes, sceneId) ? scenes[sceneId] : scenes[Object.keys(scenes)[0]], routed && routed.place);
+    enter(first, place);
     mark("ready");
     tierFromBoot(performance.now() - built);
     raf = window.requestAnimationFrame(frame);
@@ -661,7 +711,7 @@
         return world.level;
       }
     };
-    for (const key of ["slots", "drops", "core", "shell", "delivery", "spillEffect", "cavemen", "crates", "lab", "headquarters", "hud", "applyAllSwag", "renderLocker", "demoTip", "setPileLevel", "refreshStates", "trimPool", "shown", "island", "mouths", "labels", "camera", "cameraCave", "crew", "fx", "controls", "props", "altar", "path", "scenery", "jetpack", "magazine", "mirrorCave", "matrixCave", "matrixGate", "pilot", "renderOpts", "lamps", "entranceLights", "lighting", "fireSeats", "critters", "storm", "daylight", "setHour", "track", "racers", "items", "race", "audio", "weather", "drop", "diver", "plane", "course", "jumbotron", "totems", "fireworks", "fireworksPending", "orbit", "flight", "site", "agent", "poolIsland", "mine", "dsb", "clankers", "clankerPlay", "factory", "bifrost", "arcade", "carnival", "npcSync", "cloudFloorAt", "footsteps"]) {
+    for (const key of ["slots", "drops", "core", "shell", "delivery", "spillEffect", "cavemen", "crates", "lab", "headquarters", "hud", "applyAllSwag", "renderLocker", "demoTip", "setPileLevel", "refreshStates", "trimPool", "shown", "island", "mouths", "labels", "camera", "cameraCave", "crew", "fx", "controls", "props", "altar", "path", "scenery", "jetpack", "magazine", "mirrorCave", "matrixCave", "matrixGate", "pilot", "renderOpts", "lamps", "lighting", "fireSeats", "critters", "storm", "daylight", "setHour", "track", "racers", "items", "race", "audio", "weather", "drop", "diver", "plane", "course", "jumbotron", "totems", "fireworks", "fireworksPending", "orbit", "flight", "site", "agent", "poolIsland", "mine", "dsb", "clankers", "clankerPlay", "factory", "bifrost", "arcade", "carnival", "npcSync", "cloudFloorAt", "footsteps", "timechain"]) {
       Object.defineProperty(ooga, key, { get: () => active.debug && active.debug[key], enumerable: true });
     }
     window.__ooga = ooga;
@@ -675,6 +725,7 @@
     unsubscribeBlockFeed();
     unsubscribeBlockHeight();
     feedPanel.close();
+    window.BL.donationPopup.dispose();
     router.dispose();
     mempool.dispose();
     chain.dispose();

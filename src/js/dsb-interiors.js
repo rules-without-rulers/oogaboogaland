@@ -74,6 +74,7 @@
       get active(){return active;},get transitioning(){return fade>0;},
       get fade(){return fade>.18?( .36-fade)/.18:fade/.18;},
       groundAt:(x,z)=>active?active.room.groundAt(x,z):exteriorGround(x,z),
+      restore:id=>{if(active||fade>0)return false;const d=registry.get(id);if(!d)return false;swap(d);return true;},
       review:(id,inside)=>{if(active||fade>0)return;const d=registry.get(id);if(!d)return;relocate(d.entry,d.building.yaw,7);if(inside)request(d.entry);},
       dispose:()=>{disposed=true;audio.dispose();weather.setInterior(false);for(const room of rooms.values())removeChild(root,room.root);rooms.clear();registry.clear();entries.length=0;active=pending=null;}
     };

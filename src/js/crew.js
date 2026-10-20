@@ -475,8 +475,10 @@
         addChild(stunBirds, createNode({ geometry: STUN_BIRD, position: { x: Math.sin(angle) * 0.34 * h, y: 0, z: Math.cos(angle) * 0.34 * h }, scale: { x: h, y: h, z: h }, sightHidden: true }));
       }
       addChild(cave.root, stunBirds);
-      cave.parts.gunFlash = createNode({ geometry: GUN_FLASH, position: { x: 0, y: GUN_MUZZLE_Y * h, z: 0.695 * h },
-        scale: { x: h, y: h, z: h }, visible: false });
+      cave.parts.gunFlash = createNode({
+        geometry: GUN_FLASH, position: { x: 0, y: GUN_MUZZLE_Y * h, z: 0.695 * h },
+        scale: { x: h, y: h, z: h }, visible: false
+      });
       addChild(cave.parts.gun, cave.parts.gunFlash);
       cave.gunViewNodes = [cave.parts.armR, cave.parts.fingersR, cave.parts.gunBody, cave.parts.gunFlash, ...cave.parts.gunBananas];
       let weapon = world.weapons.get(contributor.name);
@@ -539,11 +541,13 @@
         twirlFlipAt: Infinity,
         health,
         stunBirds,
-        stunGear: { selectedSlot: 1, drops: [
-          { kind: "ammo", slot: 0, active: false, returning: false, node: null, model: null, owner: null, ammo: 0, label: "", unlimited: false, equipped: false, fuel: 0, sx: 0, sy: 0, sz: 0, returnTime: 0 },
-          { kind: "magazine", slot: 1, active: false, returning: false, node: null, model: null, owner: null, ammo: 0, label: "", unlimited: false, equipped: false, fuel: 0, sx: 0, sy: 0, sz: 0, returnTime: 0 },
-          { kind: "magazine", slot: 2, active: false, returning: false, node: null, model: null, owner: null, ammo: 0, label: "", unlimited: false, equipped: false, fuel: 0, sx: 0, sy: 0, sz: 0, returnTime: 0 }
-        ] },
+        stunGear: {
+          selectedSlot: 1, drops: [
+            { kind: "ammo", slot: 0, active: false, returning: false, node: null, model: null, owner: null, ammo: 0, label: "", unlimited: false, equipped: false, fuel: 0, sx: 0, sy: 0, sz: 0, returnTime: 0 },
+            { kind: "magazine", slot: 1, active: false, returning: false, node: null, model: null, owner: null, ammo: 0, label: "", unlimited: false, equipped: false, fuel: 0, sx: 0, sy: 0, sz: 0, returnTime: 0 },
+            { kind: "magazine", slot: 2, active: false, returning: false, node: null, model: null, owner: null, ammo: 0, label: "", unlimited: false, equipped: false, fuel: 0, sx: 0, sy: 0, sz: 0, returnTime: 0 }
+          ]
+        },
         axeRotation: math.quat.create(),
         gunHandRotation: math.quat.create(),
         gunSupportRotation: math.quat.create(),
@@ -580,16 +584,24 @@
         walk: null,
         pathing: ctx.npcPaths ? ctx.npcPaths.createState() : null,
         traffic: { moving: false, waiting: false, leader: null, crossing: null, tx: 0, tz: 0, fx: 0, fz: 1, distance: 0, speed: 0 },
-        progress: { x: NaN, z: NaN, stalled: 0, motionless: 0, retry: 0, replanned: false, navigationHop: false, escaped: false,
-          backoff: 0, backX: 0, backZ: 0, detours: 0, replans: 0, resets: 0, roofTime: 0 },
+        progress: {
+          x: NaN, z: NaN, stalled: 0, motionless: 0, retry: 0, replanned: false, navigationHop: false, escaped: false,
+          backoff: 0, backX: 0, backZ: 0, detours: 0, replans: 0, resets: 0, roofTime: 0
+        },
         roofEscape: { active: false, jumping: false, blocked: 0 },
-        ladder: ctx.ladders ? { plane: null, cooldown: 0, across: 0, along: 0, descentHeld: false, mix: 0,
-          flat: { width: 0, depth: 0, overlap: 0 }, vertical: { width: 0, height: 0, overlap: 0 } } : null,
-        avoidance: { active: false, side: i & 1 ? 1 : -1, stalled: 0, best: Infinity, tx: NaN, tz: NaN, goalX: NaN, goalZ: NaN, pathIndex: -1, pathVersion: -1,
+        ladder: ctx.ladders ? {
+          plane: null, cooldown: 0, across: 0, along: 0, descentHeld: false, mix: 0,
+          flat: { width: 0, depth: 0, overlap: 0 }, vertical: { width: 0, height: 0, overlap: 0 }
+        } : null,
+        avoidance: {
+          active: false, side: i & 1 ? 1 : -1, stalled: 0, best: Infinity, tx: NaN, tz: NaN, goalX: NaN, goalZ: NaN, pathIndex: -1, pathVersion: -1,
           detour: { site: -1, phase: 0, side: 1, entryX: 0, goalX: NaN, goalZ: NaN, x: 0, z: 0 },
-          navigation: { mode: 0, x: 0, z: 0, count: 0, index: 0, searches: 0, expansions: 0,
+          navigation: {
+            mode: 0, x: 0, z: 0, count: 0, index: 0, searches: 0, expansions: 0,
             jumpCandidate: 0, jumps: 0, jumpX: 0, jumpZ: 0, clearance: 0, double: false, boosted: false, moving: false,
-            costs: new Float32Array(NAV_SIZE), parents: new Int16Array(NAV_SIZE), heights: new Float32Array(NAV_SIZE), closed: new Uint8Array(NAV_SIZE), path: new Int16Array(NAV_SIZE) } },
+            costs: new Float32Array(NAV_SIZE), parents: new Int16Array(NAV_SIZE), heights: new Float32Array(NAV_SIZE), closed: new Uint8Array(NAV_SIZE), path: new Int16Array(NAV_SIZE)
+          }
+        },
         hop: 0,
         hopV: 0,
         jumps: 0,
@@ -640,8 +652,10 @@
         addChild(root, cave.breathBatch);
         for (let j = 0; j < MASK_SMOKE_CAP; j++) {
           const node = createNode({ geometry: MASK_SMOKE, sightHidden: true, smokeOpacity: 0, scale: { x: 0, y: 0, z: 0 } });
-          cave.breathSmoke.push({ node, vx: 0, vy: 0, vz: 0, life: 0, maxLife: 0, size: 0, cubes: 1, serial: 0,
-            born: 0, anchor: -1, anchorBorn: 0, phase: j * 2.399, wrapSide: j & 1 ? -1 : 1 });
+          cave.breathSmoke.push({
+            node, vx: 0, vy: 0, vz: 0, life: 0, maxLife: 0, size: 0, cubes: 1, serial: 0,
+            born: 0, anchor: -1, anchorBorn: 0, phase: j * 2.399, wrapSide: j & 1 ? -1 : 1
+          });
         }
       }
       cave.hitNodes = [];
@@ -836,12 +850,10 @@
       cave.parts.gun.visible = false;
       cave.yawn = 0;
     };
-    // Online (the green dot) is a player driving this Ooga: a signed-in player elsewhere (`remoteControlled`,
-    // set by the hub's remote-player pool while it shows them), or this visitor, when the scene's
-    // `localOnline` says this page counts (signed in, on a page with accounts); without it, any driver does.
+    // Keep local control separate from remote presence; the HUD applies the current account
+    // to local drivers so sign-in and sign-out repaint every scene's green dot immediately.
     const refreshRosterRow = (cave) => {
-      const local = cave.humanControlled && (!ctx.localOnline || ctx.localOnline());
-      hud.setRosterRow(cave.traits.name, cave.state, contributors.ageLabel(cave.contributor), local || !!cave.remoteControlled);
+      hud.setRosterRow(cave.traits.name, cave.state, contributors.ageLabel(cave.contributor), cave.humanControlled, !!cave.remoteControlled);
     };
     let player = null;
     const magazineCount = (cave = player) => cave ? cave.weapon.spareAmmo.length : 0;
@@ -1522,26 +1534,26 @@
       return { node, serial: 0, life: 0, duration: .22, arc: 0, reach: 0, tomato: false, source: null, feedback: false, workShot: false, visual: false, site: -1, aimSample: 0, from: { x: 0, y: 0, z: 0 }, to: { x: 0, y: 0, z: 0 } };
     });
     let bulletIdx = 0, bulletSerial = 0, tomatoesThrown = 0, throwCooldown = 0, tomatoGeometry = null;
-    const clearProjectiles = () => { for (const b of bulletPool) { b.life=0; b.node.visible=false; b.source=null; } throwCooldown=0; };
+    const clearProjectiles = () => { for (const b of bulletPool) { b.life = 0; b.node.visible = false; b.source = null; } throwCooldown = 0; };
     // Throws share the capped projectile pool, collision callbacks and disposal with gun rounds.
     const throwTomato = () => {
-      const cave=player;if(!cave||cave.grabbedBy||throwCooldown>0||cave.health.stunned||cave.state==="sleeping")return false;
-      if(!tomatoGeometry)tomatoGeometry=models.merge(models.box({w:.28,h:.24,d:.28,color:"#e34d32"}),models.box({w:.13,h:.07,d:.13,color:"#578544",offset:{x:0,y:.15,z:0}}));
-      const b=bulletPool[bulletIdx++%bulletPool.length],p=cave.root.position;
-      setVec(b.from,p.x,p.y+cave.traits.height*.45,p.z);
-      if(ctx.aimTarget)ctx.aimTarget(b.to);else setVec(b.to,p.x+Math.sin(cave.root.rotation.y)*16,b.from.y,p.z+Math.cos(cave.root.rotation.y)*16);
-      const dx=b.to.x-b.from.x,dy=b.to.y-b.from.y,dz=b.to.z-b.from.z,k=Math.min(1,22/(Math.hypot(dx,dy,dz)||1));
-      setVec(b.to,b.from.x+dx*k,b.from.y+dy*k-1.4,b.from.z+dz*k);
-      if(ctx.clipProjectileTarget)ctx.clipProjectileTarget(b.from,b.to);
-      b.node.geometry=tomatoGeometry;setVec(b.node.scale,1,1,1);setVec(b.node.position,b.from.x,b.from.y,b.from.z);
-      b.node.visible=true;b.duration=b.life=.8;b.arc=1.8;b.tomato=true;b.source=cave;b.feedback=b.workShot=b.visual=false;
-      throwCooldown=.45;tomatoesThrown++;ctx.onTomatoThrow?.(b.from);return true;
+      const cave = player; if (!cave || cave.grabbedBy || throwCooldown > 0 || cave.health.stunned || cave.state === "sleeping") return false;
+      if (!tomatoGeometry) tomatoGeometry = models.merge(models.box({ w: .28, h: .24, d: .28, color: "#e34d32" }), models.box({ w: .13, h: .07, d: .13, color: "#578544", offset: { x: 0, y: .15, z: 0 } }));
+      const b = bulletPool[bulletIdx++ % bulletPool.length], p = cave.root.position;
+      setVec(b.from, p.x, p.y + cave.traits.height * .45, p.z);
+      if (ctx.aimTarget) ctx.aimTarget(b.to); else setVec(b.to, p.x + Math.sin(cave.root.rotation.y) * 16, b.from.y, p.z + Math.cos(cave.root.rotation.y) * 16);
+      const dx = b.to.x - b.from.x, dy = b.to.y - b.from.y, dz = b.to.z - b.from.z, k = Math.min(1, 22 / (Math.hypot(dx, dy, dz) || 1));
+      setVec(b.to, b.from.x + dx * k, b.from.y + dy * k - 1.4, b.from.z + dz * k);
+      if (ctx.clipProjectileTarget) ctx.clipProjectileTarget(b.from, b.to);
+      b.node.geometry = tomatoGeometry; setVec(b.node.scale, 1, 1, 1); setVec(b.node.position, b.from.x, b.from.y, b.from.z);
+      b.node.visible = true; b.duration = b.life = .8; b.arc = 1.8; b.tomato = true; b.source = cave; b.feedback = b.workShot = b.visual = false;
+      throwCooldown = .45; tomatoesThrown++; ctx.onTomatoThrow?.(b.from); return true;
     };
     const fireBullet = (cave, spot) => {
       const bullet = bulletPool[bulletIdx++ % bulletPool.length], node = bullet.node;
       bullet.serial = ++bulletSerial;
-      node.geometry=models.bananaGeometry();setVec(node.scale,models.BANANA_AMMO_SCALE,models.BANANA_AMMO_SCALE,models.BANANA_AMMO_SCALE);
-      bullet.duration=.22;bullet.arc=0;bullet.tomato=false;
+      node.geometry = models.bananaGeometry(); setVec(node.scale, models.BANANA_AMMO_SCALE, models.BANANA_AMMO_SCALE, models.BANANA_AMMO_SCALE);
+      bullet.duration = .22; bullet.arc = 0; bullet.tomato = false;
       const h = cave.traits.height;
       BL.scene.updateWorld(cave.root);
       math.mat4.transformPoint(MUZZLE, cave.parts.gun.world, 0, GUN_MUZZLE_Y * h, GUN_MUZZLE_Z * h);
@@ -1588,8 +1600,8 @@
     // impact (the host's events carry those).
     const showShot = (cave, fx, fy, fz, tx, ty, tz) => {
       const bullet = bulletPool[bulletIdx++ % bulletPool.length], node = bullet.node;
-      node.geometry=models.bananaGeometry();setVec(node.scale,models.BANANA_AMMO_SCALE,models.BANANA_AMMO_SCALE,models.BANANA_AMMO_SCALE);
-      bullet.duration=.22;bullet.arc=0;bullet.tomato=false;
+      node.geometry = models.bananaGeometry(); setVec(node.scale, models.BANANA_AMMO_SCALE, models.BANANA_AMMO_SCALE, models.BANANA_AMMO_SCALE);
+      bullet.duration = .22; bullet.arc = 0; bullet.tomato = false;
       setVec(bullet.from, fx, fy, fz);
       setVec(bullet.to, tx, ty, tz);
       setVec(node.rotation, 0, Math.atan2(tx - fx, tz - fz), 0.6);
@@ -1599,7 +1611,7 @@
       bullet.source = cave; bullet.feedback = true; bullet.workShot = false; bullet.visual = true;
     };
     const updateBullets = (dt) => {
-      throwCooldown=Math.max(0,throwCooldown-dt);
+      throwCooldown = Math.max(0, throwCooldown - dt);
       for (let i = 0; i < bulletPool.length; i++) {
         const bullet = bulletPool[i];
         if (bullet.life <= 0) continue;
@@ -1625,8 +1637,8 @@
             if (shotClear && !shotClear(x, y, z, nx, ny, nz)) { bullet.life = 0; bullet.workShot = false; }
             else setVec(p, nx, ny, nz);
           }
-        } else setVec(p, lerp(from.x, to.x, k), lerp(from.y, to.y, k)+bullet.arc*4*k*(1-k), lerp(from.z, to.z, k));
-        if(bullet.tomato&&ctx.tomatoContact?.(x,y,z,p))bullet.life=0;
+        } else setVec(p, lerp(from.x, to.x, k), lerp(from.y, to.y, k) + bullet.arc * 4 * k * (1 - k), lerp(from.z, to.z, k));
+        if (bullet.tomato && ctx.tomatoContact?.(x, y, z, p)) bullet.life = 0;
         const absorbed = ctx.absorbProjectile && ctx.absorbProjectile(x, y, z, p, step, bullet.source, bullet.workShot);
         if (absorbed) bullet.life = 0;
         let impacted = false, dx = 0, dy = 0, dz = 0, distance = 0;
@@ -2660,21 +2672,19 @@
         spot,
         phase: "turn",
         t: 0,
-        age: 0,
         shots: 0,
         shotTimer: 0,
         built: false,
-        quote: BUILD_QUOTES[Math.floor(Math.random() * BUILD_QUOTES.length)],
         startYaw: cave.root.rotation.y,
         targetYaw: Math.atan2(spot.x - cave.slot.x, spot.z - cave.slot.z)
       };
       cave.parts.snack.visible = false;
       cave.parts.head.rotation.x = 0;
+      ctx.fx.say(cave, BUILD_QUOTES[Math.floor(Math.random() * BUILD_QUOTES.length)], 2);
     };
     const runBuild = (cave, dt) => {
       const b = cave.build, parts = cave.parts;
       b.t += dt;
-      b.age += dt;
       if (b.phase === "turn") {
         const k = Math.min(1, b.t / 0.35);
         cave.root.rotation.y = lerp(b.startYaw, b.targetYaw, k);
@@ -3485,13 +3495,13 @@
       }
       return false;
     };
-    const outsideClear = (fromX, fromZ, x, z, y, height) => {
+    const outsideClear = (fromX, fromZ, x, z, y, height, radius = 0) => {
       const bodies = ctx.outsideActors && ctx.outsideActors();
       if (!bodies) return true;
       for (let i = 0; i < bodies.length; i++) {
         const body = bodies[i];
-        if (y >= body.y + ctx.outsideActorHeight || y + height <= body.y) continue;
-        if (!gapClear(fromX, fromZ, x, z, body, OUTSIDE_GAP)) return false;
+        if (y >= body.y + (body.height || ctx.outsideActorHeight) || y + height <= body.y) continue;
+        if (!gapClear(fromX, fromZ, x, z, body, Math.max(OUTSIDE_GAP, (body.radius || 0) + radius))) return false;
       }
       return true;
     };
@@ -3511,7 +3521,7 @@
         if (!gapClear(p.x, p.z, x, z, other.root.position)) return false;
       }
       // Walking bodies the scene owns rather than the roster keep the same gap.
-      return outsideClear(p.x, p.z, x, z, p.y - cave.baseY, cave.bodyHeight);
+      return outsideClear(p.x, p.z, x, z, p.y - cave.baseY, cave.bodyHeight, cave.bodyRadius);
     };
     // The same gap from the other side: a scene's own walker against the whole crew.
     const actorClear = (fromX, fromZ, x, z, y, height) => {
@@ -3636,7 +3646,7 @@
       }
       // Bodies the scene owns are obstacles like any other: the walker's own
       // avoidance steers around them rather than through them.
-      if (!outsideClear(p.x, p.z, x, z, feet, cave.bodyHeight)) return false;
+      if (!outsideClear(p.x, p.z, x, z, feet, cave.bodyHeight, cave.bodyRadius)) return false;
       return shoulderClear(cave, x, z) && npcWalkable(p.x, p.z, x, z, feet, cave.bodyHeight, cave)
         && groundAt(x, z, feet, feet, cave) >= feet - STEP - 1e-7;
     };
@@ -3727,7 +3737,7 @@
         const y = groundAt(x, z, feet, feet, cave);
         if (!Number.isFinite(y) || Math.abs(y - feet) > STEP || ctx.abyssAt && ctx.abyssAt(x, z, y, cave)
           || ctx.npcLandingAllowed && !ctx.npcLandingAllowed(x, y, z, cave.bodyHeight, cave)
-          || !npcWalkable(x, z, x, z, y, cave.bodyHeight, cave) || !outsideClear(x, z, x, z, y, cave.bodyHeight)) continue;
+          || !npcWalkable(x, z, x, z, y, cave.bodyHeight, cave) || !outsideClear(x, z, x, z, y, cave.bodyHeight, cave.bodyRadius)) continue;
         let occupied = false;
         for (let i = 0; i < crewList.length; i++) {
           const other = crewList[i], q = other.root.position, floor = q.y - other.baseY;
@@ -3808,7 +3818,7 @@
       const outside = ctx.outsideActors && ctx.outsideActors();
       if (outside) for (let n = 0; n < outside.length; n++) {
         const body = outside[n];
-        if (Math.hypot(body.x - x, body.z - z) <= distance + OUTSIDE_GAP) recoveryOutside[recoveryOutsideCount++] = body;
+        if (Math.hypot(body.x - x, body.z - z) <= distance + Math.max(OUTSIDE_GAP, (body.radius || 0) + cave.bodyRadius)) recoveryOutside[recoveryOutsideCount++] = body;
       }
       // A coarse edge can cross a deep corner before reaching a higher tread.
       // Follow the same short, supported steps as the walker, not the line
@@ -3818,8 +3828,8 @@
         const nx = fromX + dx * along, nz = fromZ + dz * along;
         for (let n = 0; n < recoveryOutsideCount; n++) {
           const body = recoveryOutside[n];
-          if (y < body.y + ctx.outsideActorHeight && y + cave.bodyHeight > body.y
-            && !gapClear(x, z, nx, nz, body, OUTSIDE_GAP)) return NaN;
+          if (y < body.y + (body.height || ctx.outsideActorHeight) && y + cave.bodyHeight > body.y
+            && !gapClear(x, z, nx, nz, body, Math.max(OUTSIDE_GAP, (body.radius || 0) + cave.bodyRadius))) return NaN;
         }
         for (let n = 0; n < recoveryBodyCount; n++) {
           const other = recoveryBodies[n], floor = other.root.position.y - other.baseY;
@@ -3871,6 +3881,12 @@
     const jumpWalker = (cave, tx, tz) => {
       const nav = cave.avoidance.navigation, p = cave.root.position, feet = p.y - cave.baseY;
       if (inBananas(cave) || nav.jumpCandidate >= 8) { nav.mode = 0; cave.avoidance.stalled = -1; return; }
+      // The search spans frames: traffic or scenery can clear before it fails.
+      // Recheck the supported ground route before committing to an escape jump.
+      if (Number.isFinite(recoveryHeight(cave, p.x, p.z, feet, tx, tz, NAV_STEP))) {
+        nav.mode = 0; cave.avoidance.stalled = 0; cave.avoidance.best = Infinity; cave.avoidance.active = false;
+        return;
+      }
       for (let otherIndex = 0; otherIndex < crewList.length; otherIndex++) {
         const other = crewList[otherIndex];
         if (!shoulderNeighbor(cave, other)) continue;
@@ -4565,7 +4581,7 @@
       const height = cave.bodyHeight + Math.max(0, cave.viewLift);
       // On foot, the scene's own walkers are bodies to walk round, not through.
       if (!flying && cave.hop <= 0 && (!shoulderClear(cave, toX, toZ)
-        || !outsideClear(fromX, fromZ, toX, toZ, y, height))) return false;
+        || !outsideClear(fromX, fromZ, toX, toZ, y, height, cave.bodyRadius))) return false;
       return flying || cave.hop > 0
         ? flyable(fromX, fromZ, toX, toZ, y, height, cave) && groundAt(toX, toZ, y, y, cave) <= y
         : walkable(fromX, fromZ, toX, toZ, y, height, cave);
@@ -5237,7 +5253,7 @@
       const p = cave.root.position;
       const dealt = power * 4;
       health.value = Math.max(0, health.value - dealt);
-      if (showDamage) fx.damageNumber(p.x, p.y - cave.baseY + cave.bodyHeight + 0.15, p.z, dealt);
+      if (showDamage) ctx.fx.damageNumber(p.x, p.y - cave.baseY + cave.bodyHeight + 0.15, p.z, dealt);
       health.delay = HEALTH_REGEN_DELAY;
       if (health.value <= 0) {
         health.stunned = true;
@@ -5733,15 +5749,8 @@
       const voice = contributors.voiceFor(cave.traits.name);
       ctx.fx.say(cave, voice ? voice.poke : POKES[randomInt(POKES.length)], 1.8);
     };
-    // Build quotes; drawn by fx.drawOverlay.
-    const drawQuotes = (ctx2d, project, drawBubble) => {
-      for (let caveIndex = 0; caveIndex < crewList.length; caveIndex++) {
-        const cave = crewList[caveIndex];
-        const b = cave.build;
-        if (!b || b.phase === "return") continue;
-        const pos = project(cave.root.position.x, cave.root.position.y - cave.baseY + cave.headOffset + cave.viewLift + 0.45, cave.root.position.z);
-        drawBubble(ctx2d, b.quote, pos ? pos.x : 0, pos ? pos.y : 0, Math.min(1, (b.age || 0) / 0.25), cave);
-      }
+    // Dropped ammo's labels; drawn by fx.drawOverlay.
+    const drawDrops = (ctx2d, project) => {
       ctx2d.save();
       ctx2d.font = "bold 13px ui-monospace, monospace";
       ctx2d.textAlign = "center";
@@ -6231,10 +6240,10 @@
       cave.act.kind = "idle";
       standPose(cave);
     }
-    const stats = () => ({ built: builtEquipment.length, tomatoesThrown, projectiles: bulletPool.reduce((n,b)=>n+(b.life>0?1:0),0) });
+    const stats = () => ({ built: builtEquipment.length, tomatoesThrown, projectiles: bulletPool.reduce((n, b) => n + (b.life > 0 ? 1 : 0), 0) });
     return {
       showShot, setTint, spotOccupied,
-      cavemen, list: crewList, fanSlots, stateOf, stateCounts, workingCavemen, eatingCavemen, workingCount, eatingCount, feedableCavemen, refreshStates, refreshRosterRow, updateFan, rush, headWorldOf, applyAllSwag, wornBy, renderLocker, pokeCave, idleSay, drawQuotes,
+      cavemen, list: crewList, fanSlots, stateOf, stateCounts, workingCavemen, eatingCavemen, workingCount, eatingCount, feedableCavemen, refreshStates, refreshRosterRow, updateFan, rush, headWorldOf, applyAllSwag, wornBy, renderLocker, pokeCave, idleSay, drawDrops,
       throwTomato, clearProjectiles, control, release, relocatePlayer, sleepPlayer, wakePlayer, sitPlayer, standPlayer, clearHeadLook, prepareDragged, recoverDragged, ignite, dropRoll, damage, fireView, steer: steerPlayer, look: lookPlayer, elevate: elevatePlayer, playerAction, jumpPlayer, poseWeapon, wearJetpack, removeJetpack, setJetpackOwnership, thrust, holdRocketJump, update, dispose, stats,
       actorClear, builtInJetpack, toggleTint, twirl, toggleWeapon, selectWeapon, configureWeapon, swingWeapon, bashWeapon, releaseSwing, fireWeapon, setWeaponTrigger, canFire, weaponOrigin, meleeReach, meleePower, nearReload, canReload, startReload, stopReload, stopBurst, canSwapMagazine, swapMagazine, collectMagazine, collectGroundMagazine, collectAmmo, removeMagazines, hasMagazine, magazineCount, magazineAmmo, totalAmmo, workSites,
       get sleeping() { return !!(player && player.bedTravel.manual && player.state === "sleeping"); },

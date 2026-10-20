@@ -5,7 +5,8 @@
 import { cookieNames, isSecureOrigin, parseCookies, serializeCookie } from "./cookies.js";
 import { randomToken, sameString } from "./crypto.js";
 import { createSession, deleteAllSessions, deleteSession, SESSION_SECONDS, upsertPlayerFromGitHub } from "./db.js";
-import { allowed, clientIp, fromSite, getSessionFromRequest, redirect, safeNext, text } from "./http.js";
+import { allowed, clientIp, fromSite, getSessionForRemoval, redirect, safeNext, text } from "./http.js";
+import { contributorFor } from "./contributor-access.js";
 
 const STATE_SECONDS = 600;
 const GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize";
@@ -78,6 +79,11 @@ const callback = async (request, env, url) => {
   if (!Number.isSafeInteger(profile.id) || typeof profile.login !== "string" || profile.type !== "User") {
     return text("GitHub sent an unexpected profile.", 502, { "set-cookie": clearState });
   }
+  if (!(await contributorFor(profile.login))) {
+    const destination = new URL(next, env.SITE_ORIGIN);
+    destination.searchParams.set("signin", "contributor-required");
+    return redirect(destination.pathname + destination.search + destination.hash, [clearState]);
+  }
 
   const player = await upsertPlayerFromGitHub(env.DB, { id: profile.id, login: profile.login, avatar_url: profile.avatar_url });
   if (player.banned_at) return text("This account cannot sign in.", 403, { "set-cookie": clearState });
@@ -88,7 +94,7 @@ const callback = async (request, env, url) => {
 const logout = async (request, env, url) => {
   if (request.method !== "POST") return text("Method not allowed", 405, { allow: "POST" });
   if (!fromSite(request, env.SITE_ORIGIN)) return text("Forbidden", 403);
-  const found = await getSessionFromRequest(request, env);
+  const found = await getSessionForRemoval(request, env);
   if (found) {
     if (url.searchParams.get("all") === "1") await deleteAllSessions(env.DB, found.player.id);
     else await deleteSession(env.DB, found.token);

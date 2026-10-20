@@ -1,4 +1,6 @@
-// Builds one self-contained page; module order comes from src/index.html.
+// Builds one self-contained page; module order comes from src/index.html. A module tagged `data-defer="<group>"` is
+// inlined here like any other, so the portable page and file:// keep working; `deferred` names each group's modules,
+// which scripts/site.mjs moves out of the hosted pages into one same-origin file that loads only when needed.
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -19,11 +21,16 @@ if (!cssMatch) throw new Error("index.html: stylesheet link not found");
 const css = read(cssMatch[1]).trim().replace(/\r\n/g, "\n");
 html = html.replace(cssTag, `<style>\n${css}\n</style>`);
 
-const scriptTag = /^[ \t]*<script src="([^"]+)"><\/script>\r?\n/gm;
-const sources = [...html.matchAll(scriptTag)].map((m) => m[1]);
+const scriptTag = /^[ \t]*<script src="([^"]+)"(?: data-defer="([a-z-]+)")?><\/script>\r?\n/gm;
+const tags = [...html.matchAll(scriptTag)];
+const sources = tags.map((m) => m[1]);
+export const deferred = new Map();
+for (const [, src, group] of tags) if (group) deferred.set(group, [...(deferred.get(group) || []), src]);
 if (!sources.length) throw new Error("index.html: no script tags found");
-// Escape </script inside inlined JS: a literal closing tag would end the block early.
-const js = sources.map((src) => `// ---- ${src} ----\n${read(src).trim().replace(/\r\n/g, "\n")}`).join("\n\n").replace(/<\/script/gi, "<\\/script");
+// Escape </script inside inlined JS: a literal closing tag would end the block early. `block` is also how
+// scripts/site.mjs finds a deferred module in the page.
+export const block = (src) => `// ---- ${src} ----\n${read(src).trim().replace(/\r\n/g, "\n")}`.replace(/<\/script/gi, "<\\/script");
+const js = sources.map(block).join("\n\n");
 let first = true;
 html = html.replace(scriptTag, () => {
   if (!first) return "";

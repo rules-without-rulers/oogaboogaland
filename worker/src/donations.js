@@ -1,6 +1,6 @@
 // /donations/*: the page's donation calls, passed on over the DONATIONS service binding to bananapayserver's PageApi
 // entrypoint, as its docs/protocol.md ("How OBL's Worker passes them on") asks. Who is giving comes from this Worker's
-// GitHub sign-in, never from the page; only the page's body and its type go on, never the browser's own request, whose
+// GitHub sign-in, independently of the page's editable display handle; only the body and type go on, never its request, whose
 // cookies carry the session. The visitor's address goes beside each call for bananapayserver's rate limits. Without the
 // binding, or when bananapayserver throws, the page hears that donations are closed.
 

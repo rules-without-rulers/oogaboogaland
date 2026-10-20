@@ -136,6 +136,43 @@
     }
     return geo;
   };
+  // Subtract a polygonal vertical bore from a flat mesh at build time. Retained fragments keep their face tags.
+  // The caller supplies a liner; this cuts the opening without adding a cap across it.
+  const cutCylinder = (geo, x, z, radius, minY = -Infinity, segments = 16) => {
+    const planes = [], kept = [], verts = geo.verts;
+    if (Number.isFinite(minY)) planes.push([0, -1, 0, minY]);
+    for (let k = 0; k < segments; k++) {
+      const a = (k + 0.5) / segments * Math.PI * 2, nx = Math.cos(a), nz = Math.sin(a);
+      planes.push([nx, 0, nz, -nx * x - nz * z - radius * Math.cos(Math.PI / segments)]);
+    }
+    for (const f of geo.faces) {
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, top = -Infinity;
+      for (const i of f.i) {
+        minX = Math.min(minX, verts[i * 3]); maxX = Math.max(maxX, verts[i * 3]);
+        minZ = Math.min(minZ, verts[i * 3 + 2]); maxZ = Math.max(maxZ, verts[i * 3 + 2]); top = Math.max(top, verts[i * 3 + 1]);
+      }
+      if (maxX <= x - radius || minX >= x + radius || maxZ <= z - radius || minZ >= z + radius || top < minY) { kept.push(f); continue; }
+      let inside = f.i.map(i => [verts[i * 3], verts[i * 3 + 1], verts[i * 3 + 2]]);
+      for (const p of planes) {
+        const inner = [], outer = [];
+        for (let k = 0; k < inside.length; k++) {
+          const a = inside[k], b = inside[(k + 1) % inside.length];
+          const da = p[0] * a[0] + p[1] * a[1] + p[2] * a[2] + p[3], db = p[0] * b[0] + p[1] * b[1] + p[2] * b[2] + p[3];
+          if (da <= 0) inner.push(a);
+          if (da >= 0) outer.push(a);
+          if (da * db < 0) {
+            const t = da / (da - db), v = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+            inner.push(v); outer.push(v);
+          }
+        }
+        if (outer.length >= 3) kept.push({ ...f, i: outer.map(v => pushVert(geo, v[0], v[1], v[2])) });
+        inside = inner;
+        if (inside.length < 3) break;
+      }
+    }
+    geo.faces = kept;
+    return geo;
+  };
   const tube = ({ path, radius, rings = 8, segments = 6, colorFn, emissive = 0 } = {}) => {
     const geo = geometry();
     const ringIdx = [];
@@ -1542,5 +1579,5 @@
     }
     glass.push(box({ w: W, h: tall, d: W, color: tint, emissive: 1, offset: { x, y: mid, z } }));
   };
-  BL.models = { beam, forwardLathe, turn, shaded, torus, along, chain, railParts, columnParts, deckGrid, deckPosts, deckParts, stairParts, lanternParts, LANTERN_GLASS, geometry, pushVert, face, voxCoords, box, bevelBox, panel, lathe, glassVessel, attachGlassShell, tube, ring, polyline, merge, forward, moved, turnedX, turnedY, turnedZ, prism, cached, variants, noShadow, makeVox, voxelGeometry, voxelFaces, banana, bananaGeometry, bananaTileGeometry, bananaPileCoreGeometry, bananaPileRadiusScale, bananaPileHeightOffset, BANANA_AMMO_SCALE, BANANA_PILE_PROFILE, particleGeometry, spareMagazine, caveman, CLUB_PALETTE, GOLD_CLUB_PALETTE, labRoom, buildableGeos, crate, die, dieRotationFor, SWAG, TIER_COLORS };
+  BL.models = { beam, forwardLathe, turn, shaded, torus, along, chain, railParts, columnParts, deckGrid, deckPosts, deckParts, stairParts, lanternParts, LANTERN_GLASS, geometry, pushVert, face, cutCylinder, voxCoords, box, bevelBox, panel, lathe, glassVessel, attachGlassShell, tube, ring, polyline, merge, forward, moved, turnedX, turnedY, turnedZ, prism, cached, variants, noShadow, makeVox, voxelGeometry, voxelFaces, banana, bananaGeometry, bananaTileGeometry, bananaPileCoreGeometry, bananaPileRadiusScale, bananaPileHeightOffset, BANANA_AMMO_SCALE, BANANA_PILE_PROFILE, particleGeometry, spareMagazine, caveman, CLUB_PALETTE, GOLD_CLUB_PALETTE, labRoom, buildableGeos, crate, die, dieRotationFor, SWAG, TIER_COLORS };
 })();

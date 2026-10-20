@@ -281,7 +281,8 @@
   const MASTER_PATH_CENTER = 2;
   const GATE_Z = -(RADIUS - 2), PASS_HALF = 2.5, PASS_TOP = 5, TRAIL_HALF = 1;
   const STAIR_TERRACE = { from: MEADOW, top: 2.5, halfWidth: 1.8, blend: 1.5 };
-  const TIMECHAIN = { bearing: 8.25 / 12 * Math.PI * 2, ...STAIR_TERRACE };
+  // The final terrace is as wide as the Sphere's six-metre portal and bridge deck.
+  const TIMECHAIN = { bearing: 8.25 / 12 * Math.PI * 2, ...STAIR_TERRACE, halfWidth: 3 };
   const TIMECHAIN_X = Math.sin(TIMECHAIN.bearing), TIMECHAIN_Z = -Math.cos(TIMECHAIN.bearing);
   // Deeper treads keep the diagonal voxel risers within an Ooga's step clearance. Reach the full height
   // half a metre before the bridge so its underside cannot block the final rise onto the deck.
@@ -420,8 +421,9 @@
     return result.length >= 3 ? result : null;
   };
   const ISLANDS = new Map();
-  const island = ({ seed = 1 } = {}) => {
-    const hit = ISLANDS.get(seed);
+  const island = ({ seed = 1, roofHole = null } = {}) => {
+    const cacheKey = roofHole ? `${seed}:${roofHole.id}:${roofHole.x}:${roofHole.z}:${roofHole.radius}` : seed;
+    const hit = ISLANDS.get(cacheKey);
     if (hit) return hit;
     const rand = mulberry32(seed);
     const noise = valueNoise(rand);
@@ -2103,6 +2105,16 @@
     const geometry = gridGeometry(grid, { unit: UNIT, palette: PALETTE, origin: ORIGIN, matrixCaves,
       floorRooms: [...headquartersRooms, ...basement.rooms], cutawayPathKeys, cutawayPathBottoms, cutawayWindowMask: birdseyeWindowMask,
       cutawayWindowTops: birdseyeWindowTops, cutawayWindowCeilings: birdseyeWindowCeilings });
+    let roofOpening = null;
+    const roofMouth = roofHole && mouths.find(m => m.id === roofHole.id);
+    if (roofMouth) {
+      const sr = Math.sin(roofMouth.ry), cr = Math.cos(roofMouth.ry);
+      const x = roofMouth.x + cr * roofHole.x + sr * roofHole.z, z = roofMouth.z - sr * roofHole.x + cr * roofHole.z;
+      const top = surfaceAt(x, z);
+      roofOpening = { x, z, radius: roofHole.radius, y: top - 0.4, bottom: top - 1.3 };
+      // A centimetre of clearance hides the voxel edge behind the rotated iron liner.
+      BL.models.cutCylinder(geometry, x, z, roofHole.radius + 0.01, roofOpening.bottom);
+    }
     const rampOffset = geometry.verts.length / 3;
     const rampFaceOffset = geometry.faces.length;
     for (const v of rampGeometry.verts) geometry.verts.push(v);
@@ -2310,8 +2322,10 @@
               if (sightConvexHit(windowSightPlanes, piece.sightOffset, piece.sightCount, x, y, z, dx, dy, dz, t, columnEnd, windowSightRefs)) return false;
             }
             for (let layer = 0; layer < 2; layer++) {
-              const range = layer ? basementCollision[column] : rampCollision[column], base = layer ? (((basementCavities[column] >> 4) & 63) - 64) * UNIT : (((lowerCavities[column] >> 4) & 63) - 32) * UNIT;
-              if (!range || maxY <= base + 1e-9) continue;
+              const range = layer ? basementCollision[column] : rampCollision[column];
+              if (!range) continue;
+              const base = layer ? (((basementCavities[column] >> 4) & 63) - 64) * UNIT : (((lowerCavities[column] >> 4) & 63) - 32) * UNIT;
+              if (maxY <= base + 1e-9) continue;
               const bottom = dy ? (base - y) / dy : 0, start = dy > 0 ? Math.max(t, bottom) : t, finish = dy < 0 ? Math.min(columnEnd, bottom) : columnEnd;
               if (start >= finish - 1e-12) continue;
               for (let n = 0; n < (range & 3); n++) {
@@ -2324,10 +2338,9 @@
           }
         }
         if (end >= hi - 1e-12) break;
-        if (tx <= end + 1e-12) { gx += sx; tx += stepX; }
-        if (ty <= end + 1e-12) { gy += sy; ty += stepY; }
-        if (tz <= end + 1e-12) { gz += sz; tz += stepZ; }
-        if (gx < 0 || gx >= SX || gy < 0 || gy >= SY || gz < 0 || gz >= SZ) break;
+        if (tx <= end + 1e-12) { gx += sx; tx += stepX; if (gx < 0 || gx >= SX) break; }
+        if (ty <= end + 1e-12) { gy += sy; ty += stepY; if (gy < 0 || gy >= SY) break; }
+        if (tz <= end + 1e-12) { gz += sz; tz += stepZ; if (gz < 0 || gz >= SZ) break; }
         t = end;
       }
       return true;
@@ -2402,6 +2415,7 @@
     };
     const built = {
       geometry,
+      roofOpening,
       // Shared construction data is read-only to rendering. The cap builder
       // fills only actual solid cells and the continuous window/ramp remnants.
       cutawaySource: { data, sx: SX, sy: SY, sz: SZ, unit: UNIT, origin: ORIGIN, palette: PALETTE, windows: windowColumns, cutawayPaths,
@@ -2448,7 +2462,7 @@
       unit: UNIT,
       pathUnit: PATH_UNIT
     };
-    ISLANDS.set(seed, built);
+    ISLANDS.set(cacheKey, built);
     return built;
   };
   BL.terrain = { makeGrid, gridGeometry, compactVertices, island, segmentBoxClear, cutawaySourceFromVox, PALETTE, MAX_HEIGHT, TIMECHAIN, POOL_APPROACH };

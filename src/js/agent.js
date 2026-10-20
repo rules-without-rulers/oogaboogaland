@@ -19,6 +19,8 @@
   // reach the ground when the chest leans QUAD forward (8 + 11 cos 1.0 = 13.9 ≈ 14).
   const HIP = 8 * U, SHOULDER_Y = 11 * U, SHOULDER_X = 6 * U, NECK_Y = 10.5 * U;
   const QUAD = 1.0, HUNCH = 0.5, REAR = 0.12;
+  // From the shoulder to the middle of the palm pad, which is what a seated hand puts on a key or a bead.
+  const ARM_REACH = 13 * U;
   // Palette slots, shared by both forms
   const C = { body: 0, bodyDk: 1, hide: 2, hideDk: 3, pad: 4, groove: 5, dash: 6, shades: 7, eye: 8, silver: 9, nostril: 10, brow: 11, silverShade: 14 };
   const APE = ["#2b2724", "#1d1a18", "#56504b", "#46403c", "#3d3834", "#161412", "#2b2724", "#070707", "#2a1a0e", "#8b8681", "#0e0d0c", "#3a3531", "#f3f1df", "#c5ccd0", "#797570"];
@@ -337,6 +339,46 @@
     for (const [key] of v.map) if (+key.split(",")[1] >= 3) v.map.set(key, +key.split(",")[1] === 3 ? 13 : 12);
     return v;
   };
+  // B.C.A.'s suits recolour the plain parts' own voxels, so a suit is the body's exact shape: jacket and lapels, a
+  // cream shirt and tie in the opening, belt, trousers and shoes, the hands and head left as they are. Three cloths
+  // (charcoal with a burgundy tie, navy with gold, slate with green) follow APE's slots, chosen by identity.
+  const SUIT = { jacket: 15, lapel: 16, shirt: 17, tie: 18, trousers: 19, shoe: 20, belt: 21, brass: 22, knot: 23 };
+  const SUITS = [
+    ["#2f3136", "#1f2024", "#efe9d6", "#7a1f2b", "#26282c", "#1a1512", "#1f1a17", "#b8913a", "#55141d"],
+    ["#1f2a44", "#141c30", "#efe9d6", "#c79a3e", "#1a2238", "#1a1512", "#1f1a17", "#b8913a", "#9a7428"],
+    ["#4a5058", "#363b42", "#efe9d6", "#2f6b46", "#3d434a", "#1a1512", "#1f1a17", "#b8913a", "#1f4a30"]
+  ];
+  const recolour = (v, colour) => {
+    for (const [key] of v.map) {
+      const [x, y, z] = key.split(",").map(Number);
+      const c = colour(x, y, z, v.map.get(key));
+      if (c >= 0) v.map.set(key, c);
+    }
+    return v;
+  };
+  const suitTorsoVox = (rand) => recolour(torsoVox(rand), (x, y, z) => {
+    if (y <= 1) return SUIT.trousers;
+    if (y === 2) return z >= 5 && (x === 4 || x === 5) ? SUIT.brass : SUIT.belt;
+    if (z < 6) return SUIT.jacket;
+    // The jacket's opening widens up the chest: shirt and tie inside it, a lapel along each edge, one brass button below.
+    const off = Math.abs(x - 4.5), half = 0.6 + (y - 3) * 0.42;
+    if (y === 3) return x === 4 || x === 5 ? SUIT.brass : SUIT.jacket;
+    if (off < half) return (x === 4 || x === 5) && y <= 10 ? y === 10 ? SUIT.knot : SUIT.tie : SUIT.shirt;
+    return off < half + 1 ? SUIT.lapel : SUIT.jacket;
+  });
+  // Sleeves to the wrist, a shirt cuff, the hands bare.
+  const suitArmVox = (rand) => recolour(armVox(rand), (x, y) => y >= 4 ? SUIT.jacket : y === 3 ? SUIT.shirt : -1);
+  const suitLegVox = (rand) => recolour(legVox(rand), (x, y, z, c) => y >= 2 ? SUIT.trousers : c === C.groove ? SUIT.belt : SUIT.shoe);
+  // The rig has no knees, so a seated leg is its own part: the thigh out level under the desk from the hip, the
+  // shin down from the knee, the shoe flat on the floor, on the straight leg's origin so the hips stay where they stand.
+  const suitSeatVox = () => {
+    const v = makeVox();
+    v.fill(-1, 4, 5, 7, -1, 8, SUIT.trousers);
+    v.fill(0, 3, 2, 4, 6, 8, SUIT.trousers);
+    v.fill(0, 3, 0, 1, 5, 10, SUIT.shoe);
+    for (const x of [1, 3]) v.fill(x, x, 0, 1, 10, 10, SUIT.belt);
+    return v;
+  };
   const LAB_FLASK_HEIGHT = 0.88;
   const shorterFlask = (profile) => profile.map(([radius, y]) => [radius, y * LAB_FLASK_HEIGHT]);
   const labFlaskGeometry = (level = 0.14) => {
@@ -397,6 +439,34 @@
     return { mouth, sr, cr, reach: 4, torso: plain(geos.torso), armR: plain(geos.armR), armL: plain(geos.armL),
       labTorso: clipped(geos.labTorso, inside, true), labArm: clipped(geos.labArm, inside, true) };
   };
+  const suitVoxels = cached(() => ({
+    torso: suitTorsoVox(mulberry32(fnv1a("agent/torso"))), arm: suitArmVox(mulberry32(fnv1a("agent/armR"))),
+    leg: suitLegVox(mulberry32(fnv1a("agent/legR"))), seat: suitSeatVox()
+  }));
+  const suitGeometries = BL.models.variants((k) => {
+    const v = suitVoxels(), palette = [...APE, ...SUITS[k]];
+    const build = (vox, origin) => voxelGeometry(vox, { unit: U, palette, origin });
+    return { torso: build(v.torso, { x: -5 * U, y: 0, z: -3.5 * U }), arm: build(v.arm, { x: -2 * U, y: -14 * U, z: -2 * U }),
+      leg: build(v.leg, { x: -2 * U, y: -8 * U, z: -2 * U }), seat: build(v.seat, { x: -2 * U, y: -8 * U, z: -2 * U }) };
+  });
+  // B.C.A.'s veil, as labCoatClip's: the plain parts clipped to the island's side of it and an overlay suit in each
+  // cloth clipped to the office's, so the suit appears on a gorilla exactly where it has crossed and leaves the same way.
+  const suitClip = (mouth, plane = 0.5) => {
+    const geos = geometries(), sr = Math.sin(mouth.ry), cr = Math.cos(mouth.ry);
+    const limit = sr * mouth.x + cr * mouth.z + plane;
+    const inside = new Float32Array([sr, 0, cr, -limit]);
+    const outside = new Float32Array([-sr, 0, -cr, limit]);
+    const clipped = (geometry, clip, overlay = false) => ({ ...geometry, clipPlane: clip,
+      collisionGeometry: overlay ? EMPTY_COLLISION : geometry.collisionGeometry });
+    const plain = (part) => ({ ape: clipped(part.ape, outside), code: clipped(part.code, outside) });
+    const suits = SUITS.map((cloth, k) => {
+      const s = suitGeometries(k);
+      return { torso: clipped(s.torso, inside, true), arm: clipped(s.arm, inside, true), leg: clipped(s.leg, inside, true) };
+    });
+    return { mouth, sr, cr, plane, reach: 4, torso: plain(geos.torso), armR: plain(geos.armR), armL: plain(geos.armL),
+      legR: plain(geos.legR), legL: plain(geos.legL), suits };
+  };
+  const SUIT_PART = { torso: "torso", armR: "arm", armL: "arm", legR: "leg", legL: "leg" };
   const PART_NAMES = ["legR", "legL", "torso", "armR", "armL", "head"];
   const CLIMB_VERTICES = new WeakMap(), CLIMB_CONTACT_VERTICES = new WeakMap();
   const climbVertices = (geometry, contact = false) => {
@@ -427,8 +497,9 @@
   // groundAt(x, z) is the walking surface; walkable(fromX, fromZ, toX, toZ, y, height),
   // when given, is the scene's own swept test, the one its Oogas walk by, and bounds
   // every step the Agent takes. A walk is a list of { x, z } waypoints.
-  const create = ({ groundAt, walkable = null, form = "ape", x = 0, z = 0, heading = 0, managed = false, scale = 1, coatClip = null, climbSolidAt = null, groundPlaneAt = null, groundHullAt = null }) => {
+  const create = ({ groundAt, walkable = null, form = "ape", x = 0, z = 0, heading = 0, managed = false, scale = 1, coatClip = null, suitClip = null, suitColor = 0, climbSolidAt = null, groundPlaneAt = null, groundHullAt = null }) => {
     const geos = geometries();
+    const suitGeos = suitClip ? suitGeometries(suitColor % SUITS.length) : null;
     const root = createNode({ position: { x, y: groundAt(x, z), z }, rotation: { x: 0, y: heading, z: 0 }, scale: { x: scale, y: scale, z: scale } });
     // The renderers draw the Agent's own palette inside the Matrix instead of repainting it.
     root.matrixNative = true;
@@ -458,6 +529,17 @@
       addChild(parts.armR, coatParts.armR);
       addChild(parts.armL, coatParts.armL);
     }
+    const suitOverlay = suitClip ? suitClip.suits[suitColor % SUITS.length] : null;
+    const suitParts = suitClip ? {
+      torso: createNode({ geometry: suitOverlay.torso, visible: false }),
+      armR: createNode({ geometry: suitOverlay.arm, visible: false }),
+      armL: createNode({ geometry: suitOverlay.arm, visible: false }),
+      legR: createNode({ geometry: suitOverlay.leg, visible: false }),
+      legL: createNode({ geometry: suitOverlay.leg, visible: false })
+    } : null;
+    if (suitParts) for (const name in suitParts) addChild(parts[name], suitParts[name]);
+    // The seated hands' targets in the world, right then left, and how far each shoulder shrugs to meet them.
+    const officeHands = managed ? new Float64Array(6) : null;
     if (managed) {
       parts.jaw = createNode({ position: { x: 0, y: U, z: 4 * U } });
       addChild(parts.head, parts.jaw);
@@ -484,11 +566,13 @@
       climb: 0, climbBlend: 0, climbPose: NaN, climbStride: 0, climbDirection: 0, climbSide: 0,
       climbArmBaseL: 0, climbArmBaseR: 0, climbFitArms: 0,
       climbGripX: NaN, climbGripY: NaN, climbGripZ: NaN, climbGripRelease: 0,
-      walkLegLiftR: 0, walkLegLiftL: 0,
+      walkLegLiftR: 0, walkLegLiftL: 0, walkArmFitR: 0, walkArmFitL: 0,
       groom: 0, groomBlend: 0, groomSide: 1, groomTime: 0, sitLook: 0, sitShift: 0,
       lab: false, labRunIn: false, coatSplit: false, labWork: "", labPhase: 0, labSide: 1, labReach: 0, labReachGrip: geos.labFlask.labGripY, labPreviewItem: false, labSqueeze: false, labDie: false, labRoll: 0,
       labPalmLift: 0, labBench: null, labTouchArm: false, labTouchSide: 1,
-      labArmOffsetX: 0, labArmOffsetY: 0, labArmOffsetZ: 0
+      labArmOffsetX: 0, labArmOffsetY: 0, labArmOffsetZ: 0,
+      suit: false, suitSplit: false, seatLegs: false, officeRise: 0, officeSeat: 0, officeWork: "", officePhase: 0, officeLook: 0, officeSide: 1,
+      shrugRX: 0, shrugRY: 0, shrugRZ: 0, shrugLX: 0, shrugLY: 0, shrugLZ: 0
     };
     const positionLabItem = () => {
       if (!managed || labFlask === labPlaceholder && !state.labPreviewItem) return;
@@ -512,9 +596,13 @@
       if (state.form === next && !force) return;
       state.form = next;
       for (const name of PART_NAMES) parts[name].geometry = state.coatSplit && (name === "torso" || name === "armR" || name === "armL")
-        ? coatClip[name][next] : state.lab && name === "torso" ? geos.labTorso
-          : state.lab && (name === "armR" || name === "armL") ? geos.labArm : geos[managed && name === "head" ? "feedingHead" : name][next];
+        ? coatClip[name][next] : state.suitSplit && SUIT_PART[name] ? suitClip[name][next]
+          : state.lab && name === "torso" ? geos.labTorso
+            : state.lab && (name === "armR" || name === "armL") ? geos.labArm
+              : state.suit && SUIT_PART[name] ? suitGeos[state.seatLegs && SUIT_PART[name] === "leg" ? "seat" : SUIT_PART[name]]
+                : geos[managed && name === "head" ? "feedingHead" : name][next];
       if (coatParts) coatParts.torso.visible = coatParts.armR.visible = coatParts.armL.visible = state.coatSplit;
+      if (suitParts) for (const name in suitParts) suitParts[name].visible = state.suitSplit;
       if (managed) parts.jaw.geometry = geos.jaw[next];
       if (refreshGeometry) refreshGeometry();
     };
@@ -730,6 +818,13 @@
         state.pound = Math.max(0, state.pound - dt);
       }
       if (lounge) { pitch = reclining ? 0 : leaning ? -0.46 : -0.18 + grooming * 0.12 + Math.abs(sitShift) * 0.07; bob = 0; }
+      // Past B.C.A.'s veil the gorilla straightens by how far in it is, and sits nearly upright at its desk.
+      const seat = managed ? state.officeSeat : 0;
+      const officeArms = managed && state.officeWork !== "" && seat > 0.6 && !lounge && !jumping && rolling <= 0.001 && climbing <= 0.001
+        && state.pound <= 0 && !state.poundCharge && !state.dragging;
+      if (managed && state.officeRise > 0 && !lounge && !jumping && rolling <= 0.001 && climbing <= 0.001 && state.pound <= 0 && !state.poundCharge)
+        pitch += (0.14 - pitch) * state.officeRise;
+      if (seat > 0) { pitch += (0.12 - pitch) * seat; bob *= 1 - seat; }
       // Takeoff extends the limbs before the airborne tuck; landing compresses them.
       if (crouch > 0) { pitch += (1.12 - pitch) * crouch; bob *= 1 - crouch; }
       if (jumping) { pitch += (0.82 - pitch) * takeoff; bob = 0; }
@@ -758,6 +853,10 @@
           arm.position.x -= state.labArmOffsetX; arm.position.y -= state.labArmOffsetY; arm.position.z -= state.labArmOffsetZ;
           state.labArmOffsetX = state.labArmOffsetY = state.labArmOffsetZ = 0;
         }
+        if (managed) {
+          if (l.side < 0) { arm.position.x -= state.shrugRX; arm.position.y -= state.shrugRY; arm.position.z -= state.shrugRZ; state.shrugRX = state.shrugRY = state.shrugRZ = 0; }
+          else { arm.position.x -= state.shrugLX; arm.position.y -= state.shrugLY; arm.position.z -= state.shrugLZ; state.shrugLX = state.shrugLY = state.shrugLZ = 0; }
+        }
         // Keep an idle scientist's shoulders at the same width as its walking
         // pose; narrow gaps can let the arms pass through scenery instead.
         const climbStroke = wave(climbPhase, l.side < 0 ? 0 : 0.5), leg = parts[l.leg];
@@ -766,8 +865,12 @@
           // previous lift into damping accumulates it while a wall stays near.
           leg.position.y -= l.side < 0 ? state.walkLegLiftR : state.walkLegLiftL;
           if (l.side < 0) state.walkLegLiftR = 0; else state.walkLegLiftL = 0;
+          // Keep the hand's collision correction out of the next idle pose:
+          // otherwise damping lowers it until the fitter snaps it up again.
+          arm.rotation.x -= l.side < 0 ? state.walkArmFitR : state.walkArmFitL;
+          if (l.side < 0) state.walkArmFitR = 0; else state.walkArmFitL = 0;
           // Ordinary lab steps leave room between the coat and forearms.
-          arm.position.x = damp(arm.position.x, l.side * ((laboratory ? 0.66 : squeeze ? 0.4 : SHOULDER_X) * (1 - climbing) + 0.38 * climbing), 12, dt);
+          arm.position.x = damp(arm.position.x, l.side * ((laboratory ? 0.66 : state.suit && (state.biped || seat > 0) ? 0.62 : squeeze ? 0.4 : SHOULDER_X) * (1 - climbing) + 0.38 * climbing), 12, dt);
           // Counter the torso's tilt during each lift so the hands and toes
           // move along the wall instead of pumping away from its surface.
           arm.position.z = damp(arm.position.z, 0.5 * U - climbing * (0.036 + climbStroke * 0.055), 20, dt);
@@ -789,6 +892,8 @@
         // The pelvis follows the rectangle's front-to-back grade. Keep the
         // rear feet beneath it while the front knuckles reach the higher pad.
         legAngle -= groundPitch;
+        // Sitting swings the straight legs forward until the bent seated legs take over, level under the desk.
+        if (seat > 0) legAngle = state.seatLegs ? 0 : -seat;
         limb(leg, legAngle, dt, managed && state.landing > 0 ? 32 : 18);
         if (managed && state.dragging && l.side > 0) {
           // The left hand keeps its grip as it swings the Ooga from behind
@@ -817,6 +922,25 @@
           limb(arm, rest + (reach - rest) * groomArm, dt);
           const restSide = leaning ? supporting ? l.side * 0.18 : -l.side * 0.12 : onSide ? lower ? -l.side * 0.2 : -l.side * 0.55 : reclining ? l.side * 0.18 : -l.side * 0.12;
           arm.rotation.z = damp(arm.rotation.z, restSide + (l.side * 0.6 - restSide) * groomArm, 12, dt);
+        } else if (officeArms) {
+          // Point the straight arm from its shoulder at the hand's target, keys or an abacus bead, and shrug the
+          // shoulder along that line by what the arm's length cannot cover, so the palm lands where the work is.
+          const t = i * 3, sine = Math.sin(state.heading), cosine = Math.cos(state.heading);
+          const tx = (officeHands[t] - root.position.x) / scale, tz = (officeHands[t + 2] - root.position.z) / scale;
+          const lx = cosine * tx - sine * tz, lz = sine * tx + cosine * tz;
+          const tap = state.officeWork === "type" ? 0.03 * Math.max(0, Math.sin(state.officePhase * 11 + i * Math.PI)) : 0;
+          const ly = (officeHands[t + 1] - root.position.y) / scale + tap;
+          const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+          const sx = chest.position.x + arm.position.x, sy = HIP + chest.position.y + arm.position.y * cp - arm.position.z * sp;
+          const sz = hips.position.z + chest.position.z + arm.position.y * sp + arm.position.z * cp;
+          const dx = lx - sx, dy = ly - sy, dz = lz - sz, reach = Math.hypot(dx, dy, dz) || 1;
+          limb(arm, Math.atan2(-dz, -dy) - state.pitch, dt, 14);
+          arm.rotation.z = damp(arm.rotation.z, Math.asin(clamp(dx / reach, -1, 1)), 14, dt);
+          const shrug = clamp(reach - ARM_REACH, -0.08, 0.08) * clamp((seat - 0.6) / 0.3, 0, 1) / reach;
+          const ox = dx * shrug, oy = (dy * cp + dz * sp) * shrug, oz = (dz * cp - dy * sp) * shrug;
+          arm.position.x += ox; arm.position.y += oy; arm.position.z += oz;
+          if (l.side < 0) { state.shrugRX = ox; state.shrugRY = oy; state.shrugRZ = oz; }
+          else { state.shrugLX = ox; state.shrugLY = oy; state.shrugLZ = oz; }
         } else if (labWork) {
           const stroke = Math.sin(state.labPhase * (labWork === "type" ? 11 : 2.7) + i * Math.PI);
           const working = labWork === "type" || labWork === "touch" && l.side === state.labSide || labWork === "carry" && l.side > 0;
@@ -902,6 +1026,12 @@
         if (labWork) {
           parts.head.rotation.x = labWork === "type" || labWork === "roll" ? 0.22 : labWork === "carry" ? 0.08 : -0.08;
           parts.head.rotation.y = labWork === "touch" ? state.labSide * 0.12 : Math.sin(state.labPhase * 0.7) * 0.05;
+        }
+        if (officeArms) {
+          const work = state.officeWork;
+          parts.head.rotation.x = work === "abacus" ? 0.34 : work === "type" ? 0.26 : 0.1;
+          parts.head.rotation.y = damp(parts.head.rotation.y, work === "look" ? state.officeLook
+            : work === "abacus" ? state.officeSide * 0.32 : Math.sin(state.officePhase * 0.6) * 0.06, 6, dt);
         }
         positionLabItem();
         state.beat = Math.max(0, state.beat - dt);
@@ -1192,11 +1322,33 @@
           && Math.abs(along) < coatClip.reach && Math.abs(across) < 2.5
           && py > coatClip.mouth.floorY - 0.5 && py < coatClip.mouth.floorY + 1.5;
       }
+      // The suit, as the coat: on inside the office (`motion.office`), split at its veil, never raging or climbing.
+      let suit = false, suitSplit = false;
+      if (suitClip) {
+        const dx = px - suitClip.mouth.x, dz = pz - suitClip.mouth.z;
+        const along = dx * suitClip.sr + dz * suitClip.cr - suitClip.plane;
+        const across = dx * suitClip.cr - dz * suitClip.sr;
+        const plain = !!(motion && (motion.rage || motion.climb > 0 || motion.openingSettle > 0));
+        suitSplit = !plain && Math.abs(along) < suitClip.reach && Math.abs(across) < 2.5
+          && py > suitClip.mouth.floorY - 0.5 && py < suitClip.mouth.floorY + 1.5;
+        suit = !plain && !!(motion && motion.office);
+      }
+      const seat = suit && !suitSplit && motion ? clamp(motion.officeSeat || 0, 0, 1) : 0;
+      const seatLegs = seat > 0.5;
       const labChanged = state.lab !== lab, coatChanged = state.coatSplit !== coatSplit;
-      if (labChanged || coatChanged) {
+      if (labChanged || coatChanged || state.suit !== suit || state.suitSplit !== suitSplit || state.seatLegs !== seatLegs) {
         state.lab = lab; state.coatSplit = coatSplit;
+        state.suit = suit; state.suitSplit = suitSplit; state.seatLegs = seatLegs;
         setForm(state.form, true);
       }
+      // Rising upright past the veil and the desk work, read by pose(): the hands' targets are world points.
+      state.officeRise = motion ? clamp(motion.officeRise || 0, 0, 1) : 0;
+      state.officeSeat = seat;
+      state.officeWork = seat > 0 && (motion.officeWork === "type" || motion.officeWork === "look" || motion.officeWork === "abacus") ? motion.officeWork : "";
+      state.officePhase = motion && Number.isFinite(motion.officePhase) ? motion.officePhase : 0;
+      state.officeLook = motion ? motion.officeLook || 0 : 0;
+      state.officeSide = motion && motion.officeSide < 0 ? -1 : 1;
+      if (state.officeWork) officeHands.set(motion.officeHands);
       state.labRunIn = !!(motion && motion.labRunIn);
       // Changing clothes does not reset the body's pose. Its ordinary chest
       // and limb easing carries the walking rig into and out of the lab stance.
@@ -1262,8 +1414,8 @@
       if (state.lounge || state.roll > 0 || airborne && !state.smash || state.climb > 0) state.pound = state.beat = state.chewing = 0;
       if (state.speed > 0.1 || airborne) state.beat = 0;
       // Swimming is the hub's word (`motion.swim`, afloat in the Mempool island's water), and gives way to every pose of its own.
-      state.swim = motion && motion.swim && !airborne && !lounge && !state.climb && !state.roll && !lab && !biped && !state.dragging && !state.poundCharge && !state.pound && !state.beat ? 1 : 0;
-      state.groundPlane = !!(groundPlaneAt && !airborne && !lab && !lounge && !state.climb && !state.roll
+      state.swim = motion && motion.swim && !airborne && !lounge && !state.climb && !state.roll && !lab && !seat && !biped && !state.dragging && !state.poundCharge && !state.pound && !state.beat ? 1 : 0;
+      state.groundPlane = !!(groundPlaneAt && !airborne && !lab && !seat && !lounge && !state.climb && !state.roll
         && !state.beat && !state.pound && groundPlaneAt(px, py, pz, facing, state, motion));
       state.gait = state.beat > 0 ? "beat" : state.biped ? "upright" : state.speed <= 0.01 ? "idle"
         : motion && motion.walkGait ? motion.walkGait : state.speed > 1.7 ? "gallop" : "knuckle";
@@ -1274,7 +1426,7 @@
       if (motion && Number.isFinite(motion.supportOffset)) hips.position.y += motion.supportOffset / scale;
       // A tiny positive mount blend still uses the walking pose. Keep its
       // contact fitting until the climbing arm fitter activates above 0.001.
-      const fitWalking = climbSolidAt && state.climbBlend <= 0.001 && !state.lab && !airborne && !state.lounge
+      const fitWalking = climbSolidAt && state.climbBlend <= 0.001 && !state.lab && !state.suit && !airborne && !state.lounge
         && !state.roll && !state.beat && !state.pound;
       if (state.climbFitArms) {
         fitClimbHands(Math.max(0, dt)); fitClimbBody();
@@ -1371,7 +1523,10 @@
       }
       for (let side = 0; side < 2; side++) {
         if (state.dragging && side === 1) continue;
-        fitWalkArm(side ? parts.armL : parts.armR, side);
+        const arm = side ? parts.armL : parts.armR, angle = arm.rotation.x;
+        fitWalkArm(arm, side);
+        if (side) state.walkArmFitL = arm.rotation.x - angle;
+        else state.walkArmFitR = arm.rotation.x - angle;
       }
     };
     // A high grip can reach over a stepped rim into empty air. Lower each arm
@@ -1487,7 +1642,8 @@
         | (climbArmContact(parts.armL, 1, false, 0, 0, 0, 0.4) === 1 ? 2 : 0);
     // These matrices come from the current pose, including the floor adjustment
     // and reclining hips, so projectiles never chase the previous render frame.
-    const previewNodes = managed ? [root, hips, ...envelopeParts, chest, ...(coatParts ? [coatParts.torso, coatParts.armR, coatParts.armL] : [])] : null;
+    const previewNodes = managed ? [root, hips, ...envelopeParts, chest, ...(coatParts ? [coatParts.torso, coatParts.armR, coatParts.armL] : []),
+      ...(suitParts ? [suitParts.torso, suitParts.armR, suitParts.armL, suitParts.legR, suitParts.legL] : [])] : null;
     const previewTransforms = managed ? new Float64Array(previewNodes.length * 10) : null;
     const previewQuaternions = managed ? new Array(previewNodes.length) : null;
     const previewGeometries = managed ? new Array(previewNodes.length) : null;
@@ -2092,6 +2248,6 @@
     };
     return { start, stop, update, get active() { return !!agent; }, get agent() { return agent; }, get startedAt() { return startedAt; } };
   };
-  BL.agent = { create, createPlay, labCoatClip, GAITS, TRIPLE_MS, QUAD, HUNCH, BODY, POUND_TIME, MANAGED_BEAT_TIME, MANAGED_MOTION_RADIUS, MANAGED_MOTION_HEIGHT, MANAGED_SMASH_RADIUS, LAB_RADIUS, LAB_HEIGHT, LAB_CENTERS, LAB_IDLE_RADIUS, LAB_WALK_RADIUS, LAB_SQUEEZE_RADIUS, footprint, torso,
+  BL.agent = { create, createPlay, labCoatClip, suitClip, SUIT_COLORS: SUITS.length, GAITS, TRIPLE_MS, QUAD, HUNCH, BODY, POUND_TIME, MANAGED_BEAT_TIME, MANAGED_MOTION_RADIUS, MANAGED_MOTION_HEIGHT, MANAGED_SMASH_RADIUS, LAB_RADIUS, LAB_HEIGHT, LAB_CENTERS, LAB_IDLE_RADIUS, LAB_WALK_RADIUS, LAB_SQUEEZE_RADIUS, footprint, torso,
     labFlaskGeometry: (variant) => variant === undefined ? geometries().labFlask : labFlaskVariants(variant) };
 })();

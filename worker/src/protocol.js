@@ -1,16 +1,18 @@
 // The room's wire format and the limits it enforces, as pure functions the tests can reach.
 //
-// Client → room:  { t: "pose", x, y, z, yaw }   the driven Ooga's feet and heading, at most MOVE_HZ
-//                 { t: "body", name }            the Ooga being driven, or null when driving none
-//                 { t: "zone", name }            where that Ooga is (see Zones below)
-//                 { t: "poker-voice", table }     0-9 while watching a table, null for the Ember Den floor
+// Client → room:  { t: "pose", x, y, z, yaw }   the driven body's feet and heading, at most MOVE_HZ
+//                 { t: "body", name }            Ooga handle, `gorilla:<handle>` for its companion, or null
+//                 { t: "zone", name }            where that body is (see Zones below)
+//                 { t: "poker-voice", table }   0-9 while watching a table, null for the Ember Den floor
 //                 { t: "hub", on }               this page shows the island and is visible (host candidates)
 //                 { t: "mute", on }              this page muted its own microphone, for everyone's roster
-//                 { t: "hp", v, ko }             the driven Ooga's health (0-100) and whether it is knocked out
+//                 { t: "hp", v, ko }             the driven body's health (normalized 0-100) and knockout flag
+//                 pose.g                         optional gorilla locomotion: [flags, speed, stride, climb, side, swim]
 //                 { t: "chat", text, clientId? }            a line for Ooga Chat (see Chat below)
 //                 binary                         the NPC host's frame of every Ooga's pose, relayed as is
 // Room → client:  welcome { you, players, tickHz, now, loopEpoch }, join { p }, leave { id, reason },
-//                 body { id, name }, state { now, ps: [id, x, y, z, yaw, ...] }, kick { reason },
+//                 body { id, name }, state { now, ps: [id, x, y, z, yaw, ...], gs? }, kick { reason },
+//                 state.gs                       gorilla locomotion in [id, ...g] runs; welcome/join carry g too
 //                 release { name, reason }   the Ooga this socket claimed is not, or no longer, its to drive
 //                 host { id, followers }     who runs the NPCs now (0 for nobody) and how many pages follow
 //                                            them (a host with none sends nothing); binary NPC frames from them
@@ -46,7 +48,8 @@ export const SWEEP_MS = 60000;
 export const BOUND_XZ = 160;
 export const BOUND_Y_MIN = -130;
 export const BOUND_Y_MAX = 100;
-export const BODY_NAME = /^[A-Za-z0-9_.-]{1,40}$/;
+export const BODY_NAME = /^(?:gorilla:)?[A-Za-z0-9_.-]{1,40}$/;
+export const bodyName = (body) => typeof body === "string" && body.startsWith("gorilla:") ? body.slice(8) : body;
 export const ZONE_NAME = /^[a-z0-9-]{1,24}(\.[a-z0-9-]{1,16})?$/;
 export const OUTSIDE = "outside";
 export const NOWHERE = "none";
@@ -73,6 +76,16 @@ export const CHAT_BUCKET_KEEP = MAX_PLAYERS * 2;
 // for a page that sends it raw (every character escaped as \uXXXX is six).
 export const CHAT_PREFIX = '{"t":"chat",';
 export const CHAT_FRAME_MAX = 1024;
+// The Sphere's one exterior doorway is a short, server-leased FIFO. Room door transits are independent
+// announcements inside exactly one numbered room. Alarms, rather than timers, expire both while idle.
+export const DOOR_ZONE = "sphere";
+export const DOOR_ROOM = /^sphere-([1-9])$/;
+export const DOOR_CYCLE = /^[A-Za-z0-9_-]{1,64}$/;
+export const DOOR_GRANT_MS = 5000;
+export const DOOR_TRANSIT_MS = 12000;
+export const DOOR_PASS_MS = 8000;
+export const DOOR_HZ = 4;
+export const DOOR_BURST = 6;
 // The character set of donation messages (`donations.sanitize` in src/js/donations.js), checked against it in worker/test.
 export const CHAT_STRIP = /[^\w .,!?'@#:-]/g;
 export const sanitizeChat = (text) => String(text).replace(CHAT_STRIP, "").trim();
@@ -100,7 +113,16 @@ export const parseClientMessage = (text) => {
     const { x, y, z, yaw } = msg;
     if (!finite(x) || !finite(y) || !finite(z) || !finite(yaw)) return null;
     if (Math.abs(x) > BOUND_XZ || Math.abs(z) > BOUND_XZ || y < BOUND_Y_MIN || y > BOUND_Y_MAX) return null;
-    return { t: "pose", x: round(x), y: round(y), z: round(z), yaw: round(Math.atan2(Math.sin(yaw), Math.cos(yaw))) };
+    const pose = { t: "pose", x: round(x), y: round(y), z: round(z), yaw: round(Math.atan2(Math.sin(yaw), Math.cos(yaw))) };
+    if (msg.g !== undefined) {
+      const g = msg.g;
+      // Bits: airborne, biped, climbing, running, lab stance, office stance, sleeping. These
+      // are visual locomotion only; no client may transmit a captive or hit here.
+      if (!Array.isArray(g) || g.length !== 6 || !g.every(finite) || !Number.isInteger(g[0]) || g[0] < 0 || g[0] > 127) return null;
+      pose.g = [g[0], round(Math.max(-20, Math.min(20, g[1]))), round(Math.max(-1e6, Math.min(1e6, g[2]))),
+        round(Math.max(-1, Math.min(1, g[3]))), round(Math.max(-1, Math.min(1, g[4]))), round(Math.max(0, Math.min(1, g[5])))];
+    }
+    return pose;
   }
   if (msg.t === "body") {
     if (msg.name === null) return { t: "body", name: null };
@@ -110,7 +132,6 @@ export const parseClientMessage = (text) => {
   if (msg.t === "mute") return typeof msg.on === "boolean" ? { t: "mute", on: msg.on } : null;
   if (msg.t === "hp") return finite(msg.v) && typeof msg.ko === "boolean" ? { t: "hp", v: Math.max(0, Math.min(100, Math.round(msg.v))), ko: msg.ko } : null;
   if (msg.t === "zone") return typeof msg.name === "string" && ZONE_NAME.test(msg.name) ? { t: "zone", name: msg.name } : null;
-  if (msg.t === "poker-voice") return msg.table === null || Number.isInteger(msg.table) && msg.table >= 0 && msg.table < 10 ? { t: "poker-voice", table: msg.table } : null;
   if (msg.t === "chat") {
     if (typeof msg.text !== "string") return null;
     const line = sanitizeChat(msg.text);
@@ -119,6 +140,17 @@ export const parseClientMessage = (text) => {
     return typeof msg.clientId === "string" && msg.clientId.length > 0 && msg.clientId.length <= 64 && !/[^\w-]/.test(msg.clientId)
       ? { t: "chat", text: line, clientId: msg.clientId } : null;
   }
+  if (msg.t === "door") {
+    if (msg.op === "ask") return (msg.dir === "in" || msg.dir === "out") && Number.isInteger(msg.room) && msg.room >= 1 && msg.room <= 9
+      ? { t: "door", op: "ask", dir: msg.dir, room: msg.room } : null;
+    if (msg.op === "go" || msg.op === "done") return typeof msg.cycle === "string" && DOOR_CYCLE.test(msg.cycle)
+      ? { t: "door", op: msg.op, cycle: msg.cycle } : null;
+    if (msg.op === "cancel") return { t: "door", op: "cancel" };
+    if (msg.op === "pass") return typeof msg.door === "string" && DOOR_ROOM.test(msg.door) && (msg.dir === "in" || msg.dir === "out")
+      ? { t: "door", op: "pass", door: msg.door, dir: msg.dir } : null;
+    return null;
+  }
+  if (msg.t === "poker-voice") return msg.table === null || Number.isInteger(msg.table) && msg.table >= 0 && msg.table < 10 ? { t: "poker-voice", table: msg.table } : null;
   return null;
 };
 
@@ -164,12 +196,11 @@ export const playerFromHeaders = (headers) => {
   return { id, login, display: headers.get("x-player-display") || login, contributor: headers.get("x-player-contributor") === "1" };
 };
 
-// Who may drive which Ooga. `cast` is the character rows the build writes from src/characters/
+// Who may drive which Ooga or companion. `cast` is the character rows the build writes from src/characters/
 // (`npm run characters:json`): every Ooga is a contributor's, keyed by handle, owned by its handle and
 // its GitHub login alone: a handle that differs from the login is a name, and some other GitHub account
-// may hold it. A contributor drives only their own; anyone else drives an Ooga only while its owner is
-// not in the room and nobody else holds it. Whether an Ooga is working comes from activity the room does
-// not see, so that rule stays with the page.
+// may hold it. Only owners join the room, and they drive only their own Ooga or gorilla.
+// Signed-out local play never claims a room body.
 export const castIndex = (cast) => {
   const owners = new Map(), handleOf = new Map();
   for (const row of cast) {
@@ -181,27 +212,23 @@ export const castIndex = (cast) => {
   return { owners, handleOf };
 };
 
-/** null when `login` may drive `body` now; otherwise the refusal reason. `players` iterates { login, body }. */
-export const claimRefusal = (index, login, body, players, contributor = false) => {
-  if (body === null) return null;
-  const want = body.toLowerCase();
+export const ownedBody = (index, login, contributor = false) => {
+  if (typeof login !== "string") return null;
   const me = login.toLowerCase();
   const own = index.handleOf.get(me);
-  if (own) return own === want ? null : "not-yours";
-  const owner = index.owners.get(want);
   // Only the Worker can vouch for this fallback. Never shadow a curated alias,
   // never grant another visitor an unbundled body, and never mutate the shared cast.
-  if (contributor && !index.owners.has(me)) return want === me ? null : "not-yours";
-  if (!owner) return "unknown";
-  for (const p of players) {
-    if (p.login.toLowerCase() === me) continue;
-    if (p.login.toLowerCase() === owner) return "owner-here";
-    if (p.body && p.body.toLowerCase() === want) return "taken";
-  }
-  return null;
+  return own || (contributor && !index.owners.has(me) ? me : null);
 };
 
-// Voice: who hears whom. Players driving an Ooga hear each other at one volume while they are in the same
+/** null when `login` owns `body`; otherwise the refusal reason. */
+export const claimRefusal = (index, login, body, _players, contributor = false) => {
+  if (body === null) return null;
+  const own = ownedBody(index, login, contributor);
+  return own && own === bodyName(body).toLowerCase() ? null : "not-yours";
+};
+
+// Voice: who hears whom. Players driving an Ooga or gorilla hear each other at one volume in the same
 // zone group (the island, a bridged land, one cave or portal; see Zones above). A listener with a receiving
 // session hears every other player in its group with a published microphone; nobody hears anyone `none`.
 // The room decides and re-checks it on every pull.

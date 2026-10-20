@@ -38,12 +38,16 @@
   const panGeometry = cached(() => box({ w: 0.65, h: 0.045, d: 0.5, color: "#738996" }));
   const brushGeometry = cached(() => merge(box({ w: 0.045, h: 0.65, d: 0.045, color: "#b17d46", offset: { y: -0.25 } }), box({ w: 0.4, h: 0.13, d: 0.12, color: "#d3ba72", offset: { y: -0.6 } })));
   const leverGeometry = cached(() => box({ w: 0.08, h: 0.28, d: 0.08, color: "#263843", offset: { y: 0.12 } }));
-  const DURATIONS = { work: 18, sip: 3, chug: 6.5, spin: 2.5, rise: 2, walk: 5, fill: 7, return: 5, sit: 2, cleanwalk: 1, clean: 1.25, trashwalk: 2.5, discard: 0.75, cabinetwalk: 1, take: 0.75, tapwalk: 1 };
-  const STATION_X = 11.6, DISPENSER_Z = 0, CABINET_Z = -2.2, BIN_Z = 2.2, WALK_X = 9.6;
+  const DURATIONS = { work: 18, sip: 3, chug: 6.5, spin: 2.5, rise: 2, walk: 5, fill: 7, return: 5, sit: 2, cleanwalk: 2, clean: 1.25, trashwalk: 3, discard: 0.75, cabinetwalk: 3.5, take: 0.75, tapwalk: 2 };
   const smooth = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+  // `site` is Sani's corner, in the frame of its `node` (the gear's parent): `chair` (the recliner), `swivel`, and
+  // `spots`, where things stand in that frame: the recliner (`chair`), where he steps to on getting up (`rise`), where a
+  // spun glass lands (`spill`), and each piece of gear (`bin`, `dispenser`, `cabinet`: where it stands, its turn
+  // `ry`, and `walk`, where he stops in front of it). Sani stands in the same frame.
   const create = site => {
-    const station = (geometry, z) => createNode({ geometry, position: { x: STATION_X, y: 0, z }, rotation: { x: 0, y: -Math.PI / 2, z: 0 } });
-    const dispenser = station(dispenserGeometry(), DISPENSER_Z), cabinet = station(cabinetGeometry(), CABINET_Z), bin = station(binGeometry(), BIN_Z);
+    const S = site.spots, home = S.chair;
+    const station = (geometry, g) => createNode({ geometry, position: { x: g.x, y: 0, z: g.z }, rotation: { x: 0, y: g.ry, z: 0 } });
+    const dispenser = station(dispenserGeometry(), S.dispenser), cabinet = station(cabinetGeometry(), S.cabinet), bin = station(binGeometry(), S.bin);
     const badge = createNode({ geometry: BL.hubModels.caveSign("500 ML"), position: { x: 0, y: 0.62, z: 0.46 }, scale: { x: 0.18, y: 0.18, z: 0.18 } });
     const stream = createNode({ geometry: streamGeometry(), visible: false });
     const lever = createNode({ geometry: leverGeometry(), position: { x: 0, y: 1.7, z: 0.25 } });
@@ -60,7 +64,7 @@
     const shards = createNode({ geometry: shardGeometry(), visible: false }), pan = createNode({ geometry: panGeometry(), visible: false }), brush = createNode({ geometry: brushGeometry(), visible: false });
     addChild(site.node, shards, pan, brush);
     const state = { mode: "work", elapsed: 0, litres: CAPACITY_LITRES, sips: 0, refills: 0, broken: false, cleaned: 0, replaced: 0 };
-    let sipStart = CAPACITY_LITRES, startAngle = Math.PI, x = 0, z = 1.8, fromX = 0, fromZ = 0, toX = 0, toZ = 0, fallX = 0, fallZ = 0, fallY = 0;
+    let sipStart = CAPACITY_LITRES, startAngle = Math.PI, x = home.x, z = home.z, fromX = 0, fromZ = 0, toX = 0, toZ = 0, fallX = 0, fallZ = 0, fallY = 0, heading = Math.PI;
     const mount = (node, parent, px, py, pz) => {
       if (node.parent !== parent) { removeChild(node.parent, node); addChild(parent, node); }
       node.position.x = px; node.position.y = py; node.position.z = pz;
@@ -71,7 +75,7 @@
     const pause = () => {
       state.mode = "work"; state.elapsed = 0;
       if (state.broken) state.litres = 0;
-      state.broken = false; x = 0; z = 1.8;
+      state.broken = false; x = home.x; z = home.z;
       mount(mug, tray, 0, 0.07, 0); mount(shards, site.node, 0, 0, 0);
       mount(pan, site.node, 0, 0, 0); mount(brush, site.node, 0, 0, 0);
       mug.visible = stream.visible = shards.visible = pan.visible = brush.visible = false;
@@ -84,12 +88,12 @@
       if (action !== "spin") return false;
       state.mode = "spin"; seat.speed = Math.min(7, seat.speed + 4.5);
       const h = site.chair.scale.x;
-      fallX = Math.cos(seat.angle) * 0.95 * h;
-      fallZ = 1.8 - Math.sin(seat.angle) * 0.95 * h; fallY = 1.12 * h;
+      fallX = home.x + Math.cos(seat.angle) * 0.95 * h;
+      fallZ = home.z - Math.sin(seat.angle) * 0.95 * h; fallY = 1.12 * h;
       return true;
     };
     const update = (cave, seat, dt) => {
-      const h = cave.traits.height, parts = cave.parts, p = site.place;
+      const h = cave.traits.height, parts = cave.parts;
       state.elapsed += dt;
       while (state.elapsed >= DURATIONS[state.mode]) {
         state.elapsed -= DURATIONS[state.mode];
@@ -103,17 +107,17 @@
             state.mode = state.litres < 0.001 ? "rise" : "work"; startAngle = seat.angle; break;
           }
           case "spin": state.broken = true; state.litres = 0; state.mode = "rise"; startAngle = seat.angle; break;
-          case "rise": x = 1.6; z = 0.2; if (state.broken) route("cleanwalk", -1.7, -0.2); else route("walk", WALK_X, DISPENSER_Z); break;
+          case "rise": x = S.rise.x; z = S.rise.z; if (state.broken) route("cleanwalk", S.spill.x, S.spill.z); else route("walk", S.dispenser.walk.x, S.dispenser.walk.z); break;
           case "cleanwalk": state.mode = "clean"; break;
-          case "clean": route("trashwalk", WALK_X, BIN_Z); break;
+          case "clean": route("trashwalk", S.bin.walk.x, S.bin.walk.z); break;
           case "trashwalk": state.mode = "discard"; break;
-          case "discard": state.cleaned++; route("cabinetwalk", WALK_X, CABINET_Z); break;
+          case "discard": state.cleaned++; route("cabinetwalk", S.cabinet.walk.x, S.cabinet.walk.z); break;
           case "cabinetwalk": state.mode = "take"; break;
-          case "take": state.broken = false; state.replaced++; stock[4].visible = false; route("tapwalk", WALK_X, DISPENSER_Z); break;
+          case "take": state.broken = false; state.replaced++; stock[4].visible = false; route("tapwalk", S.dispenser.walk.x, S.dispenser.walk.z); break;
           case "walk": case "tapwalk": state.mode = "fill"; break;
-          case "fill": state.litres = CAPACITY_LITRES; state.refills++; route("return", 1.6, 0.2); break;
+          case "fill": state.litres = CAPACITY_LITRES; state.refills++; route("return", S.rise.x, S.rise.z); break;
           case "return": state.mode = "sit"; break;
-          case "sit": state.mode = "work"; x = 0; z = 1.8; stock[4].visible = true; break;
+          case "sit": state.mode = "work"; x = home.x; z = home.z; stock[4].visible = true; break;
         }
       }
       const mode = state.mode, t = state.elapsed / DURATIONS[mode];
@@ -129,10 +133,10 @@
       if (mode === "work") { mount(mug, tray, 0, 0.07, 0); return; }
       if (mode === "spin") {
         const flight = Math.min(1, state.elapsed / 0.7);
-        mount(mug, site.node, fallX + (-1.7 - fallX) * flight, Math.max(0.04, fallY * (1 - flight * flight)), fallZ + (-0.2 - fallZ) * flight);
+        mount(mug, site.node, fallX + (S.spill.x - fallX) * flight, Math.max(0.04, fallY * (1 - flight * flight)), fallZ + (S.spill.z - fallZ) * flight);
         mug.rotation.z = flight * 2.4;
         if (flight === 1) { state.broken = true; state.litres = 0; mug.visible = false; }
-        mount(shards, site.node, -1.7, 0.01, -0.2); shards.visible = state.broken;
+        mount(shards, site.node, S.spill.x, 0.01, S.spill.z); shards.visible = state.broken;
         return;
       }
       if (mode !== "fill" && mode !== "take") mount(mug, parts.armL, -0.27, -0.48 * h, 0.08 * h);
@@ -146,19 +150,23 @@
       seat.speed = 0;
       seat.angle = mode === "rise" ? startAngle + Math.atan2(Math.sin(Math.PI - startAngle), Math.cos(Math.PI - startAngle)) * smooth(t) : Math.PI;
       site.swivel.rotation.y = seat.angle;
-      let standing = 1, heading = Math.PI / 2;
+      // Getting up and sitting down he faces as the chair does; walking, the way he goes; at a piece of gear, that
+      // piece; sweeping, the way he came.
+      let standing = 1;
       const walking = mode.endsWith("walk") || mode === "return";
       if (mode === "rise" || mode === "sit") {
         standing = mode === "rise" ? smooth(t) : 1 - smooth(t);
-        x = 1.6 * standing; z = 1.8 - 1.6 * standing; heading = seat.angle;
+        x = home.x + (S.rise.x - home.x) * standing; z = home.z + (S.rise.z - home.z) * standing; heading = seat.angle;
       } else if (walking) {
         x = fromX + (toX - fromX) * t; z = fromZ + (toZ - fromZ) * t;
         heading = Math.atan2(toX - fromX, toZ - fromZ);
+      } else if (mode !== "clean") {
+        const g = mode === "fill" ? S.dispenser : mode === "take" ? S.cabinet : S.bin;
+        heading = Math.atan2(g.x - x, g.z - z);
       }
-      cave.root.position.x = p.x + x * Math.cos(p.ry) + z * Math.sin(p.ry);
-      cave.root.position.z = p.z - x * Math.sin(p.ry) + z * Math.cos(p.ry);
-      cave.root.position.y = p.y + 0.88 * h * (1 - standing) + cave.baseY * standing;
-      cave.root.rotation.x = mode === "clean" ? 0.65 : -0.23 * (1 - standing); cave.root.rotation.y = p.ry + heading;
+      cave.root.position.x = x; cave.root.position.z = z;
+      cave.root.position.y = 0.88 * h * (1 - standing) + cave.baseY * standing;
+      cave.root.rotation.x = mode === "clean" ? 0.65 : -0.23 * (1 - standing); cave.root.rotation.y = heading;
       const stride = walking ? Math.sin(state.elapsed * 9) * 0.5 : 0;
       parts.legR.rotation.x = -1.05 * (1 - standing) + stride; parts.legL.rotation.x = -1.05 * (1 - standing) - stride;
       parts.head.rotation.x = 0.12; parts.armR.rotation.x = -0.2 - stride * 0.5;
@@ -172,16 +180,16 @@
         parts.armL.rotation.x = -2;
       }
       if (mode === "clean") {
-        mount(pan, site.node, -1.7, 0.08, -0.2);
+        mount(pan, site.node, S.spill.x, 0.08, S.spill.z);
         mount(brush, parts.armL, 0, -0.55 * h, 0);
         parts.armL.rotation.x = -0.6; parts.armL.rotation.z = Math.sin(t * Math.PI * 8) * 0.35;
-        mount(shards, site.node, -1.7, 0.02 + t * 0.08, -0.2); shards.scale.x = shards.scale.z = 1 - t * 0.65;
+        mount(shards, site.node, S.spill.x, 0.02 + t * 0.08, S.spill.z); shards.scale.x = shards.scale.z = 1 - t * 0.65;
       } else if (mode === "trashwalk" || mode === "discard") {
         mount(pan, parts.armR, 0, -0.56 * h, 0.1); parts.armR.rotation.x = -1.3;
         pan.rotation.x = 1.3;
         if (mode !== "discard") mount(shards, pan, 0, 0.03, 0);
         else {
-          mount(shards, site.node, WALK_X + (STATION_X - WALK_X) * t, 0.85 + Math.sin(t * Math.PI) * 0.5, BIN_Z);
+          mount(shards, site.node, S.bin.walk.x + (S.bin.x - S.bin.walk.x) * t, 0.85 + Math.sin(t * Math.PI) * 0.5, S.bin.walk.z + (S.bin.z - S.bin.walk.z) * t);
           shards.visible = t < 0.9; pan.rotation.z = -t;
         }
       } else if (!state.broken || mode === "cabinetwalk" || mode === "take") shards.visible = false;

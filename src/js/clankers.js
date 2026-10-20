@@ -44,6 +44,10 @@
   const LAB_ENTRY_GOAL = -1;
   const LAB_ROUTE_START = -2.5;
   const LAB_TURN_SPEED = 6;
+  // B.C.A.: how many points a walk in the office takes, its pace, the time to sit or stand, one abacus stroke, and
+  // each part of the desk routine's span in seconds, [least, most].
+  const OFFICE_POINTS = 6, OFFICE_SPEED = 1.1, OFFICE_SIT = 1, OFFICE_SWIVEL = 0.8, OFFICE_STROKE = 1.1;
+  const OFFICE_WORK = { type: [5, 9], look: [1, 2], abacus: [3, 5] }, OFFICE_NEXT = { type: "look", look: "abacus", abacus: "type" };
   const create = (ctx) => {
     const { crew, sites, groundAt, clear } = ctx;
     const footprint = BL.agent.footprint, torso = BL.agent.torso;
@@ -64,6 +68,14 @@
     // side, enabled? }. labInside owns the entrance plane, independently of assignment.
     const labSite = Number.isInteger(ctx.labSite) ? ctx.labSite : -1, labStations = ctx.labStations || [], labEquipment = ctx.labEquipment || [];
     const coatClip = labSite >= 0 ? BL.agent.labCoatClip(sites[labSite].mouth) : null;
+    // B.C.A.'s office, from the scene: { mouth, stations, waits, entry } in world space, kept here against the
+    // site whose mouth it furnishes with who holds each desk and wait spot. The suit's veil is its first office's.
+    const offices = ctx.offices || [], officeOf = new Array(sites.length).fill(null);
+    for (const office of offices) {
+      const index = sites.findIndex(site => site.mouth === office.mouth);
+      if (index >= 0) officeOf[index] = { ...office, site: index, desks: new Array(office.stations.length).fill(null), waiting: new Array(office.waits.length).fill(null) };
+    }
+    const suitClip = offices.length ? BL.agent.suitClip(offices[0].mouth) : null;
     const labNodes = new Float64Array(16 * 3), labHeadings = new Float64Array(16), labCosts = new Float64Array(16), labTimes = new Float64Array(16), labWaits = new Float64Array(16), labFixed = new Uint8Array(16), labPrevious = new Int8Array(16), labQueue = new Uint8Array(16);
     const labEdges = new Uint8Array(16 * 16 * 2), labEdgeWaits = new Float64Array(16 * 16 * 2), labEdgeTimes = new Float64Array(16 * 16 * 2);
     const labPenalties = new Float64Array(16 * 16);
@@ -1140,7 +1152,7 @@
     };
     const reserve = (e, move = false) => {
       const site = sites[e.site];
-      if (!site) return false;
+      if (!site || officeOf[e.site]) return false;
       if (e.site === labSite) return reserveLab(e, move) || !move && reserveFloor(e);
       const p = e.root.position, previousHeading = e.heading;
       e.heading = site.mouth.ry;
@@ -1729,15 +1741,250 @@
       e.planningEntry = false;
       setGoal(e, p.x, p.y, p.z); return false;
     };
+    // B.C.A.'s office. A gorilla claims a desk, or else a wait spot, at the apron before it walks in, runs the aisle to
+    // the entry point like any cave, then walks the office's authored points upright and unhurried: it never steers or
+    // collides in here, so it holds back for an office walker just ahead of it instead (leavers first, then the roster's
+    // order). At its desk it squares up, slides back into the chair as it sits, and types, glances at the screen and
+    // works the abacus in turn, for spans hashed from its name. Asked to go, it stands, walks back out to the entry
+    // point and frees its desk once it is past the chair. Taken over, enraged, set alight or thrown, it lets go at once.
+    const officeClaim = (e) => {
+      const o = officeOf[e.site], f = e.office;
+      if (f.desk >= 0 || f.wait >= 0) return true;
+      const n = o.desks.length;
+      for (let k = 0; k < n; k++) {
+        const d = (f.seed + k) % n;
+        if (!o.desks[d]) { o.desks[d] = e; f.desk = d; return true; }
+      }
+      for (let k = 0; k < o.waiting.length; k++) {
+        const w = (f.seed + k) % o.waiting.length;
+        if (!o.waiting[w]) { o.waiting[w] = e; f.wait = w; return true; }
+      }
+      return false;
+    };
+    const officeFree = (e, desk = true, wait = true) => {
+      for (let i = 0; i < officeOf.length; i++) {
+        const o = officeOf[i];
+        if (!o) continue;
+        if (desk) for (let k = 0; k < o.desks.length; k++) if (o.desks[k] === e) o.desks[k] = null;
+        if (wait) for (let k = 0; k < o.waiting.length; k++) if (o.waiting[k] === e) o.waiting[k] = null;
+      }
+      if (desk) e.office.desk = -1;
+      if (wait) e.office.wait = -1;
+    };
+    const releaseOffice = (e) => {
+      const f = e.office;
+      if (f.desk >= 0 && officeOf[e.site] && f.stage !== "out") officeStation(e).chairYaw = officeStation(e).aisleYaw;
+      officeFree(e);
+      f.stage = f.work = ""; f.count = f.index = 0; f.stroke = f.held = 0;
+      e.motion.officeSeat = 0; e.motion.officeWork = "";
+    };
+    // Where in an office the body stands, as the mouth's across and along; NaN outside every office.
+    const OFFICE_AT = { site: -1, across: 0, along: 0 };
+    const officeAt = (x, y, z) => {
+      OFFICE_AT.site = -1;
+      for (let i = 0; i < officeOf.length; i++) {
+        const o = officeOf[i];
+        if (!o) continue;
+        const site = sites[i], m = site.mouth, dx = x - m.x, dz = z - m.z;
+        const across = dx * site.cr - dz * site.sr, along = dx * site.sr + dz * site.cr;
+        if (along > 4 || along < -m.room.to - 0.5 || Math.abs(across) > 3.5 || y < m.floorY - 0.5 || y > m.floorY + 2) continue;
+        OFFICE_AT.site = i; OFFICE_AT.across = across; OFFICE_AT.along = along;
+        return OFFICE_AT;
+      }
+      return OFFICE_AT;
+    };
+    // Suited inside, and rising onto two feet over the first metre and a half past the veil, on the way in or out.
+    const syncOffice = (e) => {
+      const m = e.motion, p = e.root.position;
+      m.office = false; m.officeRise = 0;
+      if (!suitClip || e.rage.active) return;
+      const at = officeAt(p.x, p.y, p.z);
+      if (at.site < 0) return;
+      m.office = caveAt(p.x, p.y, p.z) === at.site;
+      if (e.controlled || e.climb.active || e.jump.active || e.drive.airborne || e.fire.rolling) return;
+      const t = clamp((0.5 - at.along) / 1.4, 0, 1);
+      m.officeRise = t * t * (3 - 2 * t);
+    };
+    const officePoint = (e, x, z) => {
+      const f = e.office, at = f.count * 2;
+      f.path[at] = x; f.path[at + 1] = z; f.count++;
+    };
+    // The way back to the entry point from anywhere in the room: a body among the desks first steps into the walkway
+    // between desks and chairs, then along it to the aisle.
+    const officeWayOut = (e) => {
+      const o = officeOf[e.site] || officeOf[officeAt(e.root.position.x, e.root.position.y, e.root.position.z).site], p = e.root.position;
+      const site = sites[o.site], across = (p.x - site.mouth.x) * site.cr - (p.z - site.mouth.z) * site.sr;
+      const along = (p.x - site.mouth.x) * site.sr + (p.z - site.mouth.z) * site.cr;
+      e.office.count = e.office.index = 0;
+      if (along < o.entryAlong - 0.1) {
+        if (Math.abs(across) > o.aisleHalf) {
+          sitePoint(site, across, o.walkway, POINT); officePoint(e, POINT.x, POINT.z);
+          sitePoint(site, 0, o.walkway, POINT); officePoint(e, POINT.x, POINT.z);
+        }
+      }
+      officePoint(e, o.entry.x, o.entry.z);
+      return o;
+    };
+    // From the entry point to the gorilla's desk (the aisle, the walkway, its chair's front) or to its wait spot.
+    const officeWayIn = (e, o) => {
+      const f = e.office;
+      if (f.desk >= 0) {
+        const s = o.stations[f.desk];
+        officePoint(e, s.aisle.x, s.aisle.z); officePoint(e, s.approach.x, s.approach.z);
+      } else officePoint(e, o.waits[f.wait].x, o.waits[f.wait].z);
+    };
+    const officeSpan = (e, work) => {
+      const range = OFFICE_WORK[work], f = e.office;
+      const hash = Math.imul(f.seed ^ Math.imul(f.cycle + 1, 0x9e3779b1), 0x85ebca6b) >>> 0;
+      return range[0] + (range[1] - range[0]) * (hash / 4294967296);
+    };
+    const officeStation = (e) => officeOf[e.site].stations[e.office.desk];
+    // Walk the authored points: turn toward the next one, then step. Wait while another office walker stands within
+    // reach ahead (a leaver goes before an arrival, and otherwise the first of the roster), or for a little while any
+    // other body in the way.
+    const officeWalk = (e, dt) => {
+      const f = e.office, p = e.root.position;
+      if (f.index >= f.count) { e.speed = 0; return true; }
+      const gx = f.path[f.index * 2], gz = f.path[f.index * 2 + 1], dx = gx - p.x, dz = gz - p.z, distance = Math.hypot(dx, dz);
+      if (distance < 0.04) { f.index++; e.speed = 0; return f.index >= f.count; }
+      const desired = Math.atan2(dx, dz), turn = Math.atan2(Math.sin(desired - e.heading), Math.cos(desired - e.heading));
+      e.heading += clamp(turn, -dt * LAB_TURN_SPEED * 0.6, dt * LAB_TURN_SPEED * 0.6);
+      if (Math.abs(turn) > 0.6) { e.speed = 0; return false; }
+      const leaving = f.stage === "out";
+      for (let i = 0; i < list.length; i++) {
+        const other = list[i], theirs = other.office.stage;
+        if (other === e || !other.active || theirs && theirs !== "go" && theirs !== "out") continue;
+        const q = other.root.position, ox = q.x - p.x, oz = q.z - p.z, gap = Math.hypot(ox, oz);
+        if (gap > 1.25 || Math.abs(q.y - p.y) > 1.5 || (ox * dx + oz * dz) / distance < gap * 0.35) continue;
+        const yields = !theirs ? f.held < 2.5 : theirs === "out" && !leaving || (theirs === "out") === leaving && other.index < e.index;
+        if (yields) { e.speed = 0; f.held += dt; return false; }
+      }
+      f.held = 0;
+      const step = Math.min(distance, OFFICE_SPEED * dt);
+      p.x += dx / distance * step; p.z += dz / distance * step;
+      e.speed = step / dt;
+      return false;
+    };
+    // At work in an office with no routine under way, or left deep in one among its desks: `workOffice` walks it on.
+    const officeWanted = (e) => {
+      if (e.phase === "travel" && e.route === "enter" || e.jump.active || e.recover > 0 || e.loungeDepart || e.lab.yielding) return false;
+      if (e.phase === "work" && officeOf[e.site] && !officeQuit(e)) return true;
+      const p = e.root.position, at = officeAt(p.x, p.y, p.z);
+      return at.site >= 0 && caveAt(p.x, p.y, p.z) === at.site && at.along < officeOf[at.site].entryAlong - 0.1;
+    };
+    const officeQuit = (e) => e.mode !== e.owner.state || e.phase !== "work" || !officeOf[e.site]
+      || e.pendingSite >= 0 && e.pendingSite !== e.site;
+    const officeHands = (e, s, dt) => {
+      const f = e.office, m = e.motion, hands = m.officeHands;
+      m.officeWork = f.work; m.officeLook = s.look; m.officeSide = s.side;
+      m.officePhase += dt;
+      hands.set(s.keys);
+      if (f.work !== "abacus") return;
+      // The inner hand works the abacus; the outer one rests on the desk by the screen.
+      const working = s.side < 0 ? 0 : 3, resting = 3 - working;
+      s.stroke(Math.min(1, f.stroke), POINT);
+      hands[working] = POINT.x; hands[working + 1] = POINT.y; hands[working + 2] = POINT.z;
+      hands[resting] = s.rest[0]; hands[resting + 1] = s.rest[1]; hands[resting + 2] = s.rest[2];
+    };
+    const workOffice = (e, dt) => {
+      const f = e.office, p = e.root.position, m = e.motion;
+      e.biped = true; e.parked = false; e.lounge = "";
+      e.pound = e.beat = e.stand = 0;
+      const quit = officeQuit(e);
+      if (!f.stage) {
+        // Arrived at the entry point, or handed back a body somewhere in the room: walk to the desk or wait spot, or out.
+        const o = officeWayOut(e);
+        if (!quit && officeClaim(e)) {
+          if (Math.hypot(p.x - o.entry.x, p.z - o.entry.z) < 0.1) f.count = f.index = 0;
+          officeWayIn(e, o); f.stage = "go";
+        } else f.stage = "out";
+        e.hasSlot = true; e.slotX = f.path[f.count * 2 - 2]; e.slotY = p.y; e.slotZ = f.path[f.count * 2 - 1];
+      }
+      m.officeSeat = 0; m.officeWork = "";
+      if (f.stage === "go") {
+        if (quit) { officeFree(e, false, true); officeWayOut(e); f.stage = "out"; return; }
+        if (officeWalk(e, dt)) {
+          if (f.desk >= 0) { f.stage = "align"; f.time = 0; }
+          else f.stage = "wait";
+        }
+      } else if (f.stage === "wait") {
+        const o = officeOf[e.site], w = o.waits[f.wait];
+        e.speed = 0;
+        e.heading += clamp(Math.atan2(Math.sin(w.heading - e.heading), Math.cos(w.heading - e.heading)), -dt * 3, dt * 3);
+        if (quit) { officeFree(e); officeWayOut(e); f.stage = "out"; return; }
+        for (let d = 0; d < o.desks.length; d++) {
+          if (o.desks[d]) continue;
+          officeFree(e, false, true);
+          o.desks[d] = e; f.desk = d;
+          officeWayOut(e); officeWayIn(e, o); f.stage = "go";
+          break;
+        }
+      } else if (f.stage === "align" || f.stage === "sit" || f.stage === "swivel" || f.stage === "work") {
+        const s = officeStation(e);
+        if (f.stage === "align") {
+          // Back to the chair, which stands turned out to the aisle.
+          const turn = Math.atan2(Math.sin(s.sitHeading - e.heading), Math.cos(s.sitHeading - e.heading));
+          e.heading += clamp(turn, -dt * 3, dt * 3); e.speed = 0;
+          if (quit) { officeWayOut(e); f.stage = "out"; }
+          else if (Math.abs(turn) < 0.02) { e.heading = s.sitHeading; f.stage = "sit"; f.time = f.turn = 0; }
+        } else if (f.stage === "sit") {
+          // Sit back onto the seat, then swivel round to the desk; standing up runs the same two the other way.
+          const down = !quit;
+          f.time = clamp(f.time + (down ? dt : -dt) / OFFICE_SIT, 0, 1);
+          const t = f.time * f.time * (3 - 2 * f.time);
+          p.x = s.approach.x + (s.seat.x - s.approach.x) * t; p.z = s.approach.z + (s.seat.z - s.approach.z) * t;
+          e.heading = s.sitHeading; e.speed = 0; m.officeSeat = t; s.chairYaw = s.aisleYaw;
+          if (down && f.time >= 1) f.stage = "swivel";
+          else if (!down && f.time <= 0) {
+            f.count = f.index = 0;
+            officePoint(e, s.aisle.x, s.aisle.z); officePoint(e, officeOf[e.site].entry.x, officeOf[e.site].entry.z);
+            f.stage = "out";
+          }
+        } else if (f.stage === "swivel") {
+          const round = !quit;
+          f.turn = clamp(f.turn + (round ? dt : -dt) / OFFICE_SWIVEL, 0, 1);
+          const t = f.turn * f.turn * (3 - 2 * f.turn);
+          e.heading = s.sitHeading + Math.atan2(Math.sin(s.heading - s.sitHeading), Math.cos(s.heading - s.sitHeading)) * t;
+          s.chairYaw = s.aisleYaw * (1 - t);
+          p.x = s.seat.x; p.z = s.seat.z; e.speed = 0; m.officeSeat = 1;
+          if (round && f.turn >= 1) { f.stage = "work"; f.work = "type"; f.left = officeSpan(e, "type"); f.stroke = 0; }
+          else if (!round && f.turn <= 0) { f.stage = "sit"; f.time = 1; }
+        } else {
+          m.officeSeat = 1; e.speed = 0; p.x = s.seat.x; p.z = s.seat.z; e.heading = s.heading; s.chairYaw = 0;
+          f.left -= dt;
+          if (f.work === "abacus" && f.stroke > 0) {
+            // A stroke under way finishes and is counted before anything else.
+            f.stroke += dt / OFFICE_STROKE;
+            if (f.stroke >= 1) { s.commit(); f.stroke = 0; }
+          } else if (quit) { f.stage = "swivel"; f.turn = 1; f.work = ""; }
+          else if (f.left <= 0) {
+            f.cycle++; f.work = OFFICE_NEXT[f.work]; f.left = officeSpan(e, f.work);
+          } else if (f.work === "abacus") f.stroke = dt / OFFICE_STROKE;
+          if (f.stage === "work") officeHands(e, s, dt);
+        }
+      } else if (f.stage === "out") {
+        const o = officeOf[e.site] || officeOf[officeAt(p.x, p.y, p.z).site];
+        // The chair is clear once it has walked past the desk's front.
+        if (f.desk >= 0 && f.index >= 1) officeFree(e, true, false);
+        if (officeWalk(e, dt)) {
+          releaseOffice(e);
+          // Nowhere free after all: back out of the door and wait at the apron like any newcomer.
+          if (!quit) { e.phase = "travel"; e.route = "exit"; e.fromSite = o.site; e.entryTurn = false; }
+        }
+      }
+    };
     const beginTravel = (e, siteIndex) => {
       e.roam.departPending = false;
       releasePortal(e);
       if (siteIndex !== labSite) releaseLab(e);
+      releaseOffice(e);
       e.site = siteIndex; e.hasSlot = false; e.slotIndex = -1; e.overflow = false;
       e.portalWait = false; e.portalRetry = 0;
       e.phase = "travel"; e.route = "exit"; e.entryTurn = false; e.blocked = 0; e.retry = 0;
       const p = e.root.position, from = caveAt(p.x, p.y, p.z);
       e.fromSite = from;
+      // Already in the office: `workOffice` takes it from where it stands.
+      if (from === siteIndex && officeOf[siteIndex]) { e.phase = "work"; e.route = ""; return; }
       const room = reserve(e);
       if (from === siteIndex) {
         e.phase = "work"; e.route = ""; e.rest = 0.5;
@@ -1752,6 +1999,7 @@
       }
     };
     const activate = (e, atPosition = false) => {
+      if (e.remoteControlled) return;
       if (rage) rage.cancel(e, "respawn");
       if (ctx.rageRelease) ctx.rageRelease(e);
       clearWallSearch(e);
@@ -1771,7 +2019,7 @@
       e.climb.traverseStart = e.climb.traverseEnd = 0;
       e.climb.retry = e.climb.airAttachAfter = e.climb.handoffDirection = d.climbAxis = d.climbSide = 0; e.roam.count = e.roam.index = 0; e.roam.departPending = e.roam.propDeparture = false;
       e.actionControlled = e.motion.smash = false;
-      releaseLab(e); e.motion.lab = false;
+      releaseLab(e); e.motion.lab = false; releaseOffice(e);
       e.mode = e.owner.state; e.site = e.owner.work.plannedSite >= 0 ? e.owner.work.plannedSite : e.owner.work.site;
       e.parked = e.mode === "working"; e.parkFor = 0; e.exitFootprint = false;
       e.biped = e.parked ? true : false;
@@ -1787,6 +2035,17 @@
         d.run = d.passiveFall = d.cancelled = false; d.heading = e.heading;
         e.exitFootprint = true; e.height = WALK_HEIGHT;
         setGoal(e, e.root.position.x, e.root.position.y, e.root.position.z);
+      } else if (e.mode === "working" && officeOf[e.site] && officeClaim(e)) {
+        // Already at work when the page opens: seated at its desk, or standing by to take one.
+        const o = officeOf[e.site], f = e.office, s = f.desk >= 0 ? o.stations[f.desk] : null, w = s ? null : o.waits[f.wait];
+        e.root.position.x = s ? s.seat.x : w.x; e.root.position.y = o.mouth.floorY; e.root.position.z = s ? s.seat.z : w.z;
+        e.heading = s ? s.heading : w.heading;
+        e.phase = "work"; e.route = ""; e.parked = false; e.biped = true; e.footprintMode = "walk"; e.compact = false;
+        f.stage = s ? "work" : "wait"; f.work = s ? "type" : ""; f.left = s ? officeSpan(e, "type") : 0; f.stroke = 0;
+        e.motion.officeSeat = s ? 1 : 0;
+        if (s) { s.chairYaw = 0; officeHands(e, s, 0); }
+        e.hasSlot = true; e.slotX = e.root.position.x; e.slotY = e.root.position.y; e.slotZ = e.root.position.z;
+        setGoal(e, e.slotX, e.slotY, e.slotZ);
       } else if (e.mode === "working" && sites[e.site] && reserve(e)) {
         e.root.position.x = e.slotX; e.root.position.y = e.slotY; e.root.position.z = e.slotZ;
         e.heading = e.site === labSite ? (labStations[e.lab.station] || e.lab.waitPoint).heading : sites[e.site].mouth.ry;
@@ -1801,7 +2060,7 @@
           if (e.mode === "working" && sites[e.site]) beginTravel(e, e.site);
         } else { e.active = false; e.retry = 1; return; }
       }
-      syncLab(e);
+      syncLab(e); syncOffice(e);
       e.gorilla.poseManaged(atPosition || e.lounge ? 2 : 1 / 60, e.root.position.x, e.root.position.y, e.root.position.z, e.heading, 0, false, e.biped, e.lounge, e.motion);
       labEnvelope(e);
       if (e.lounge === "sit" && e.gorilla.sitCompact) { e.footprintMode = "sit"; e.compact = true; }
@@ -1810,7 +2069,9 @@
       if (e === debugShuttle) { debugShuttleAt = elapsed + 4; debugShuttleUntil = 0; }
     };
     for (let i = 0; i < crew.list.length; i++) {
-      const owner = crew.list[i], gorilla = BL.agent.create({ managed: true, groundAt, climbSolidAt, groundPlaneAt: ctx.groundPlaneAt, groundHullAt: ctx.groundHullAt, scale: SCALE, coatClip });
+      const owner = crew.list[i], seed = fnv1a(`office/${owner.traits.name || i}`);
+      const gorilla = BL.agent.create({ managed: true, groundAt, climbSolidAt, groundPlaneAt: ctx.groundPlaneAt, groundHullAt: ctx.groundHullAt, scale: SCALE, coatClip,
+        suitClip, suitColor: seed % BL.agent.SUIT_COLORS });
       gorilla.poseManaged(0.6, 0, 0, 0, i * 2.39996323, 0, false, false);
       const entry = {
         owner, cave: owner, tooltipOwner: owner, gorilla, root: gorilla.root, parts: gorilla.parts,
@@ -1822,6 +2083,9 @@
         random: mulberry32(fnv1a(`clanker/${owner.id || owner.traits.name || i}`)),
         // Its bed while its Ooga sleeps: see `updateSleep`.
         sleep: { stage: "", slot: -1, leg: 0, count: 0, path: new Float64Array(SLEEP_POINTS * 2), mark: 0, pose: "", stall: 0, near: Infinity },
+        // Its desk or wait spot in B.C.A. and where it is in the routine: see `workOffice`.
+        office: { stage: "", desk: -1, wait: -1, time: 0, count: 0, index: 0, path: new Float64Array(OFFICE_POINTS * 2), seed,
+          cycle: 0, work: "", left: 0, stroke: 0, turn: 0, held: 0 },
         heading: i * 2.39996323, speed: 0, blocked: 0, retry: 0, rest: 0, turn: 1, portalWait: false,
         steerHeading: NaN, steerSide: 0, steerFor: 0, steerClear: 0, steerGoalX: NaN, steerGoalZ: NaN,
         backoutLeft: 0, backoutHeading: 0,
@@ -1840,7 +2104,7 @@
           departPending: false, departAt: 0, departX: 0, departY: 0, departZ: 0, riseAdmitted: false,
           wallFailedX: NaN, wallFailedZ: NaN, wallFailedUntil: 0,
           levelOnlyUntil: 0, planAt: 0, progressTime: 0, progressX: NaN, progressZ: NaN, progressDistance: Infinity, progressTurn: Infinity, progressCursor: -1, progressClaim: 0, backoutX: NaN, backoutZ: NaN, alignTime: 0, failedX: NaN, failedZ: NaN, failedUntil: 0 },
-        controlled: false, pendingSite: -1, actionControlled: false,
+        controlled: false, remoteControlled: false, pendingSite: -1, actionControlled: false,
         debugMove: { active: false, cancelled: false, status: "", reason: "", target: { x: 0, y: 0, z: 0 },
           goal: { x: 0, y: 0, z: 0, heading: NaN }, candidate: 0, hops: 0, normalized: false,
           normalizeAt: 0, normalizeScore: Infinity, wallTarget: false, wallPending: false, wallFinal: false,
@@ -1863,6 +2127,7 @@
           climbGripX: NaN, climbGripY: NaN, climbGripZ: NaN, climbGripStride: 0, climbGripDirection: 0, climbGripSide: 0, climbGripRelease: 0,
           climb: 0, climbBlend: NaN, openingSettle: 0, climbStride: 0, climbDirection: 0, climbSide: 0, verifyGrip: false, mantle: 0, groom: 0, groomSide: 1, groomPhase: 0,
           sitWait: 3, sitTime: 0, sitLook: 0, sitShift: 0, sitLookTarget: 0, sitShiftTarget: 0,
+          office: false, officeRise: 0, officeSeat: 0, officeWork: "", officePhase: i * 0.53, officeLook: 0, officeSide: 1, officeHands: new Float64Array(6),
           lab: false, labRunIn: false, workExit: false, labWork: "", labPhase: i * 0.71, labSide: 1, labDt: 1 / 30, labReach: 0, labGripY: 0.53105, labItemGeometry: null, labSqueeze: false,
           labDie: false, labRoll: 0, labBench: null },
         climb: { active: false,
@@ -1914,9 +2179,9 @@
     };
     const plan = (cave, index) => {
       const e = byOwner.get(cave);
-      if (!e || !sites[index]) return;
+      if (!e || e.remoteControlled || !sites[index]) return;
       if (e === debugShuttle && index !== labSite) return;
-      if (e.controlled || e.rage.active || e.drive.airborne || e.climb.active || e.debugMove.active) { e.pendingSite = index; return; }
+      if (e.controlled || e.rage.active || e.drive.airborne || e.climb.active || e.debugMove.active || e.office.stage) { e.pendingSite = index; return; }
       // Reloading never evicts a gorilla whose next shift is in this cave.
       if (e.site === index) return;
       if (!e.active) { e.site = index; return; }
@@ -2750,7 +3015,7 @@
       rememberDebugPoint(d, false, p.x, p.y, p.z);
       if (labEscape === e) labEscape = null;
       e.stuck.escapeLeft = 0;
-      releasePortal(e); releaseLab(e); e.hasSlot = false; e.pendingSite = -1;
+      releasePortal(e); releaseLab(e); releaseOffice(e); e.hasSlot = false; e.pendingSite = -1;
       e.roam.departPending = false; e.roam.pose = ""; e.loungeHeading = NaN;
       if (e.lounge) leaveLounge(e);
       e.parked = false; e.pound = e.beat = e.stand = e.rest = 0;
@@ -4191,6 +4456,12 @@
         e.portalWait = false;
         // Walk into the centre aisle before approaching the arch. Painted
         // paths do not change the gait or trigger a leap.
+        // An office takes only those it has a desk or a wait spot for; the rest stand aside on the apron until one frees.
+        if (officeOf[e.site] && !officeClaim(e)) {
+          sitePoint(site, e.index & 1 ? 1.6 : -1.6, 7.2, POINT);
+          if (Math.hypot(POINT.x - p.x, POINT.z - p.z) > 0.3) { setGoal(e, POINT.x, POINT.y, POINT.z); return true; }
+          return false;
+        }
         sitePoint(site, 0, 5.5, POINT);
         if (Math.hypot(POINT.x - p.x, POINT.z - p.z) > 0.3) {
           setGoal(e, POINT.x, POINT.y, POINT.z); return true;
@@ -4228,6 +4499,7 @@
           }
           e.entryTurn = true;
           releasePortal(e);
+          if (officeOf[e.site]) { e.phase = "work"; e.route = ""; e.office.stage = ""; return true; }
         }
         if (!e.hasSlot && !reserve(e)) {
           // The room floor is reachable even if every equipment pose is busy.
@@ -4899,6 +5171,7 @@
     };
     const entryFor = (value) => value === undefined ? player : typeof value === "number" ? list[value]
       : value && value.gorilla ? value : byOwner.get(value);
+    const sleeping = (e = player) => !!e && (e.sleep.stage === "asleep" || e.sleep.stage === "settle");
     const resumeEntry = (e) => {
       e.drive.resume = false; e.hasSlot = false;
       if (e.debugMove.active) { e.phase = e.route === "exit" ? "leave" : "chill"; resetDebugRoute(e); return; }
@@ -4932,9 +5205,44 @@
       if (!player) return false;
       const e = player;
       cancelInput(); player = null; e.controlled = false;
+      if (sleeping(e)) { e.drive.resume = false; return true; }
+      if (e.sleep.slot >= 0 && !sleeps(e.owner)) releaseBed(e);
       e.drive.resume = true;
       if (!e.drive.airborne && !e.fire.rolling && !e.climb.active) resumeEntry(e);
       return true;
+    };
+    // The room owns this companion while its player is elsewhere. Free its AI
+    // reservations before hiding it; the remote pool supplies the one visible rig.
+    const setRemote = (name, on) => {
+      if (disposed) return;
+      const e = byOwner.get(crew.cavemen.get(name));
+      if (!e || e.remoteControlled === on) return;
+      if (on) {
+        if (player === e) release();
+        if (rage) rage.cancel(e, "remote");
+        if (ctx.rageRelease) ctx.rageRelease(e);
+        releasePortal(e); releaseLab(e); releaseOffice(e); releaseBed(e);
+        clearWallSearch(e);
+        e.remoteControlled = true;
+        e.active = e.root.visible = e.hasSlot = e.jump.active = false;
+        e.debugMove.active = e.debugMove.cancelled = false;
+        e.climb.active = e.climb.searchPending = e.climb.claimPending = e.climb.crestPending = false;
+        e.drive.airborne = e.drive.resume = false;
+        e.overflow = false;
+        if (e.tracked && ctx.untrack) ctx.untrack(e);
+        e.tracked = false;
+      } else {
+        e.remoteControlled = false;
+        e.retry = 0;
+        if (alive(e.owner)) activate(e);
+      }
+    };
+    const createRemote = (name, rec) => {
+      const rig = BL.agent.create({ managed: true, groundAt: () => rec.y, scale: SCALE,
+        coatClip, suitClip, suitColor: fnv1a(`office/${name}`) % BL.agent.SUIT_COLORS });
+      rig.root.matrixNative = false;
+      rig.root.matrixLiving = true;
+      return rig;
     };
     const respawn = (e, x = 0, y = 0, z = 0) => {
       if (rage) rage.cancel(e, "respawn");
@@ -4950,25 +5258,74 @@
       }
       activate(e, e.controlled);
     };
+    const travelRefusal = () => {
+      const e = player;
+      if (!e || !e.controlled || e.remoteControlled || !e.active || !e.root.visible) return "Choose a gorilla before travelling.";
+      if (sleeping(e)) return "Wake your gorilla before travelling.";
+      if (e.lounge || e.loungeDepart || e.office.stage || e.motion.officeSeat > 0) return "Stand up before travelling.";
+      const c = e.climb, d = e.drive;
+      if (c.active || c.mountPending || c.waitRelease || c.openingExit || c.openingStagePending || c.handoffDirection
+        || d.climbTurnTimer > 0 || e.motion.openingSettle > 0) return "Finish climbing before travelling.";
+      if (d.airborne || e.jump.active || !d.grounded) return "Land before travelling.";
+      if (e.capture?.cave || e.motion.dragging) return "Let go of the Ooga before travelling.";
+      if (e.fire.rolling || e.fire.requested || e.fire.rollRecover > 0) return "Finish rolling before travelling.";
+      if (e.pound > 0 || e.beat > 0 || e.stand > 0 || e.recover > 0 || e.actionControlled || e.motion.smash
+        || e.motion.poundCharge > 0 || e.motion.throwProgress > 0 || e.gorilla.smashActive || d.motionRecover > 0
+        || d.jumpHeld || d.jumpPressed || d.jumpBuffer > 0) return "Finish your action before travelling.";
+      return null;
+    };
+    // The scene validates the destination before this location-only handoff.
+    // Health, fire, ownership and facing survive travel unchanged.
+    const travel = (position) => {
+      if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y) || !Number.isFinite(position.z)
+        || travelRefusal()) return false;
+      const e = player, p = e.root.position, d = e.drive, m = e.motion;
+      cancelInput();
+      clearWallSearch(e); releasePortal(e); releaseLab(e); releaseOffice(e); releaseBed(e);
+      if (labEscape === e) { e.stuck.escapeLeft = 0; labEscape = null; }
+      e.roam.count = e.roam.index = 0; e.roam.departPending = e.roam.propDeparture = false;
+      e.backoutLeft = e.speed = e.rest = e.blocked = e.retry = 0;
+      e.phase = "controlled"; e.route = ""; e.hasSlot = false; e.pendingSite = -1;
+      d.vx = d.vy = d.vz = d.jumps = 0;
+      d.airborne = d.passiveFall = d.resume = d.wallRelease = d.motionEnvelope = false; d.grounded = true;
+      m.takeoff = m.landing = m.supportOffset = m.climb = m.climbDirection = m.climbSide = m.mantle = 0;
+      m.climbBlend = m.climbGripX = m.climbGripY = m.climbGripZ = NaN; m.climbGripRelease = 0;
+      m.verifyGrip = m.workExit = false;
+      p.x = position.x; p.y = position.y; p.z = position.z;
+      setGoal(e, p.x, p.y, p.z);
+      syncLab(e); syncOffice(e);
+      e.gorilla.poseManaged(0, p.x, p.y, p.z, e.heading, 0, false, e.biped, "", m);
+      e.radius = Math.max(WALK_RADIUS, e.gorilla.bodyRadius + 0.1);
+      e.height = Math.max(WALK_HEIGHT, e.gorilla.bodyHeight + 0.04);
+      labEnvelope(e);
+      return true;
+    };
     const possess = (value) => {
       const e = entryFor(value);
-      if (!e || !e.active || !e.root.visible) return false;
+      if (!e || e.remoteControlled || !e.active || !e.root.visible) return false;
       if (player === e) return true;
       if (rage) rage.cancel(e, "possession");
       if (ctx.rageRelease) ctx.rageRelease(e);
       release(); player = e; e.controlled = true; e.drive.resume = false;
-      // A hand on a sleeper wakes it. Its bed stays its own while its Ooga sleeps on.
-      if (e.sleep.stage) { e.sleep.stage = ""; e.gorilla.chest.scale.y = 1; e.exitFootprint = false; }
+      const asleep = sleeping(e);
+      // Selecting a settled sleeper keeps its bed and pose until an explicit wake.
+      if (e.sleep.stage && !asleep) { e.sleep.stage = ""; e.gorilla.chest.scale.y = 1; e.exitFootprint = false; }
       e.fire.panic.active = false;
       cancelDebugMove(e);
       e.climb.debugStuck = false;
       e.roam.departPending = false;
       releaseLab(e);
+      releaseOffice(e);
       releasePortal(e); e.hasSlot = false; e.pendingSite = -1;
       const d = e.drive, p = e.root.position;
       d.x = d.z = 0; d.heading = e.heading; d.run = d.jumpHeld = d.jumpDown = d.jumpPressed = d.cancelled = false; d.jumpBuffer = 0;
       d.avoidSide = d.avoidTime = 0;
       d.vx = d.vy = d.vz = 0; d.airborne = e.jump.active;
+      if (asleep) {
+        d.airborne = false; d.grounded = true; d.jumps = 0;
+        e.speed = 0; e.phase = "sleep"; e.route = "";
+        return true;
+      }
       if (e.jump.active) {
         const j = e.jump, direction = j.reverse ? -1 : 1;
         d.vx = (j.toX - j.fromX) / j.duration * direction;
@@ -4983,8 +5340,23 @@
       e.phase = "controlled"; e.route = ""; e.exitFootprint = true;
       return true;
     };
+    const wake = () => {
+      if (!sleeping()) return false;
+      const e = player;
+      e.sleep.stage = ""; e.gorilla.chest.scale.y = 1;
+      e.lounge = ""; e.loungeDepart = false; e.recover = Math.max(e.recover, 1.2);
+      e.footprintMode = "walk"; e.phase = "controlled"; e.route = ""; e.exitFootprint = true;
+      // The wake press is consumed; holding it must not turn into a jump.
+      cancelInput();
+      return true;
+    };
     const control = (input) => {
       if (!player || !input) return false;
+      if (sleeping()) {
+        if (input.jumpPressed) wake();
+        else cancelInput();
+        return true;
+      }
       const d = player.drive;
       d.x = Number.isFinite(input.x) ? clamp(input.x, -1, 1) : 0;
       d.z = Number.isFinite(input.z) ? clamp(input.z, -1, 1) : 0;
@@ -5095,7 +5467,7 @@
     const smashPower = (charge = 0, combo = quickSmash(player)) => (2.5 + 2.5 * clamp(charge, 0, 1)) * (combo ? 0.25 : 1);
     const smash = (charge = 0, combo = quickSmash(player), power = smashPower(charge, combo)) => {
       const e = player;
-      if (!e || e.climb.active || e.fire.rolling || e.parked || e.beat || e.pound > 0 && !e.poundHit) return false;
+      if (!e || sleeping(e) || e.climb.active || e.fire.rolling || e.parked || e.beat || e.pound > 0 && !e.poundHit) return false;
       if (e.recover > 0 && !combo) return false;
       if (ctx.canSmash ? !ctx.canSmash(e) : !expandGesture(e, 2.25)) return false;
       const duration = e.gorilla.pound(e.drive.airborne, charge, combo);
@@ -5108,7 +5480,7 @@
     };
     const chestBeat = () => {
       const e = player;
-      if (!e || e.climb.active || e.fire.rolling || e.drive.airborne || e.recover > 0 || e.parked || e.pound || e.beat) return false;
+      if (!e || sleeping(e) || e.climb.active || e.fire.rolling || e.drive.airborne || e.recover > 0 || e.parked || e.pound || e.beat) return false;
       if (!expandGesture(e, 1.55)) return false;
       const p = e.root.position;
       e.speed = e.drive.vx = e.drive.vz = 0;
@@ -5673,7 +6045,7 @@
         const sx = Math.sin(exit.openingExitHeading), sz = Math.cos(exit.openingExitHeading);
         if (dx * sx + dz * sz > 2.4 || Math.abs(dx * sz - dz * sx) > 1.1) exit.openingExit = false;
       }
-      syncLab(e);
+      syncLab(e); syncOffice(e);
       e.motion.workExit = !e.controlled && e.mode === "working" && e.phase === "travel" && e.route === "exit";
       e.motion.openingSettle = Math.max(0, e.motion.openingSettle - dt * 1.4);
       e.motion.supportOffset = damp(e.motion.supportOffset, 0, 12, dt);
@@ -5720,7 +6092,7 @@
         wallPanels.coordinates(e.climb.panel, p.x, p.y, p.z);
       }
       // Certify the final animated trunk too, after support and speed settle.
-      if (ctx.walkingPeersClear && !e.motion.lab && !e.climb.active && !e.jump.active
+      if (ctx.walkingPeersClear && !e.motion.lab && !e.office.stage && !e.climb.active && !e.jump.active
         && !e.drive.airborne && !e.lounge && !ctx.walkingPeersClear(e, dt, beforeX, beforeY, beforeZ)) {
         p.x = beforeX; p.y = beforeY; p.z = beforeZ;
         e.heading = e.root.rotation.y; e.speed = 0; return false;
@@ -5936,8 +6308,8 @@
     // home; beds are dealt for the day by a hash of the roster's names (`bedsToday`), so the choice is random,
     // reproducible, the same on every page, and never reshuffled under a sleeper. Stages: "go" along the path, "settle" turning onto the bed, "asleep", then "return" back
     // along the path once its Ooga wakes, after which the ordinary work and chill machinery takes over.
-    // A hand on it wins: possession wakes it where it lies, and a release while its Ooga still sleeps walks it
-    // back to bed from where it stands.
+    // Selection keeps a settled sleeper in bed until Space wakes it. A release while its Ooga still sleeps
+    // walks an awakened gorilla back to bed from where it stands.
     const SLEEP_POSES = ["left", "right", "back"], SLEEP_REACH = 1.1, SLEEP_ARRIVE = 0.3, SLEEP_STALL = 25, SLEEP_MARK = 1.9, DAY_MS = 86400000;
     // Who sleeps where today: every gorilla's bed, worked out once a day from the roster's names alone. Each takes
     // the first bed still free in its own shuffled order, in roster order, so the answer never depends on who
@@ -6027,7 +6399,7 @@
           return "busy";
         }
         if (!reserveBed(e)) return false;
-        releasePortal(e); releaseLab(e); clearWallSearch(e);
+        releasePortal(e); releaseLab(e); releaseOffice(e); clearWallSearch(e);
         e.hasSlot = false; e.pendingSite = -1; e.parked = false; e.rest = e.pound = e.beat = e.stand = 0;
         e.roam.departPending = false; e.roam.count = e.roam.index = 0;
         if (e.lounge) { leaveLounge(e); e.lounge = ""; e.loungeDepart = false; e.recover = Math.max(e.recover, 0.65); }
@@ -6079,6 +6451,7 @@
       }
       if (s.stage === "asleep") {
         e.speed = 0;
+        if (e.controlled) e.lounge = s.pose;
         // Slow breath in the chest, and a mark of sleep from its mouth now and then.
         e.gorilla.chest.scale.y = 1 + Math.sin(elapsed * 1.4 + e.index) * 0.018;
         if ((s.mark -= dt) <= 0 && ctx.sleep.mark) {
@@ -6246,7 +6619,7 @@
     const resetRageWarp = e => {
       // Clear old movement without releasing the newly captured Ooga.
       // The brief wall visit has no supporting floor; its return is checked.
-      clearWallSearch(e); releasePortal(e); releaseLab(e);
+      clearWallSearch(e); releasePortal(e); releaseLab(e); releaseOffice(e);
       if (climbTurn === e.index) climbTurn = -1;
       if (labEscape === e) { e.stuck.escapeLeft = 0; labEscape = null; }
       const c = e.climb, d = e.drive, m = e.motion, jump = e.jump, p = e.root.position;
@@ -6318,7 +6691,7 @@
         }
       },
       begin: e => {
-        clearWallSearch(e); releasePortal(e); releaseLab(e);
+        clearWallSearch(e); releasePortal(e); releaseLab(e); releaseOffice(e);
         if (labEscape === e) { e.stuck.escapeLeft = 0; labEscape = null; }
         e.debugMove.active = false; e.roam.count = e.roam.index = 0; e.roam.departPending = false;
         if (e.lounge) leaveLounge(e);
@@ -6339,6 +6712,7 @@
       }
     });
     const updateEntry = (e, dt) => {
+      if (e.remoteControlled) return;
       // Expiry, health and account/activity cancellation precede regeneration
       // and every movement controller, including swimming or climbing.
       if (rage) rage.check(e, elapsed);
@@ -6360,6 +6734,7 @@
       if (e.controlled || e.mode !== "chilling" || e.fire.burning) e.motion.groom = 0;
       if (e.controlled || e.fire.burning) e.loungeDepart = false;
       e.parkFor = Math.max(0, e.parkFor - dt);
+      if (e.controlled && sleeping(e)) { updateSleep(e, dt, beforeX, beforeY, beforeZ); return; }
       // An Ooga asleep sends its gorilla to bed, not away. "busy" lets the rest of this update walk it out of a
       // room or put its work down first; with no bed to be had it is hidden as it always was.
       const bedtime = ctx.sleep && sleeps(e.owner) && !e.controlled && !e.drive.airborne && !e.fire.rolling && !e.fire.burning && !e.climb.active
@@ -6370,6 +6745,7 @@
           releaseBed(e);
           releasePortal(e);
           releaseLab(e);
+          releaseOffice(e);
           e.active = e.root.visible = e.hasSlot = e.jump.active = false;
           e.debugMove.active = e.debugMove.cancelled = false; e.debugMove.status = "";
           clearWallSearch(e);
@@ -6380,6 +6756,10 @@
         return;
       }
       if (!e.active) { if (!e.retry) activate(e); return; }
+      // Taken over, enraged, alight, climbing, thrown or ordered about: the desk and the routine let go at once.
+      if ((e.office.stage || e.office.desk >= 0 || e.office.wait >= 0)
+        && (e.controlled || e.rage.active || e.fire.burning || e.fire.rolling || e.fire.panic.active || e.climb.active
+        || e.jump.active || e.drive.airborne || e.debugMove.active)) releaseOffice(e);
       if (e.sleep.stage && !sleeps(e.owner) && alive(e.owner) && !e.controlled && !e.drive.airborne && !e.fire.rolling && !e.fire.burning && !e.climb.active
         && updateWake(e, dt, beforeX, beforeY, beforeZ)) return;
       if (ctx.fireContact && ctx.fireContact(e, p.x, p.y, p.z)) ignite(e);
@@ -6444,6 +6824,7 @@
         // can step the target onto this frame's moving gorilla mesh.
         rage.contact(e, elapsed); return;
       }
+      if (e.office.stage || !e.debugMove.active && officeWanted(e)) { workOffice(e, dt); poseEntry(e, dt, beforeX, beforeY, beforeZ); return; }
       if (separateSurfacePeers(e, dt)) { poseEntry(e, dt, beforeX, beforeY, beforeZ); return; }
       if (e.motion.lab && e.lab.item >= 0 && (e.mode !== e.owner.state || e.pendingSite >= 0 && e.pendingSite !== e.site)) {
         if (e.lab.stage !== "return") { e.lab.stage = "return"; e.lab.reach = 0; }
@@ -6459,6 +6840,7 @@
       if (e.mode !== e.owner.state) {
         e.roam.departPending = false;
         releasePortal(e);
+        releaseOffice(e);
         e.lab.yielding = 0; e.lab.yieldFor = null; e.lab.yieldReady = false;
         if (e.lounge) leaveLounge(e);
         e.mode = e.owner.state; e.hasSlot = false;
@@ -6486,7 +6868,7 @@
       }
       // Outside a work room the gait always stays on all fours. Standing is
       // a brief idle action inside, never a narrow-door collision workaround.
-      e.biped = e.motion.lab && !e.motion.labRunIn || e.parked || e.phase === "work" && (e.stand > 0 || e.beat > 0);
+      e.biped = e.motion.lab && !e.motion.labRunIn || e.parked || e.phase === "work" && (e.stand > 0 || e.beat > 0) || e.motion.officeRise >= 0.8;
       if (e.parked && e.gorilla.standCompact) e.footprintMode = "stand";
       else if (!e.parked && e.footprintMode === "stand" && e.gorilla.compact) e.footprintMode = "walk";
       else if (e.phase === "chill" && !e.exitFootprint && !e.gorilla.motionActive && e.gorilla.compact
@@ -6649,8 +7031,8 @@
       // after cancellation and dismount. Ordinary collision-safe wandering
       // still runs; a stall must not silently relocate or hide this actor.
       if (e.debugMove.active || e.debugMove.cancelled || e.climb.debugRole >= 0 && e.climb.active) return;
-      // A sleeper lies still on purpose, and its trip keeps its own watch for a stall.
-      if (e.sleep.stage) return;
+      // A sleeper lies still on purpose, and its trip keeps its own watch for a stall; so does an office's walk.
+      if (e.sleep.stage || e.office.stage) return;
       const p = e.root.position, s = e.stuck, job = e.lab, r = e.roam;
       if (e.fire.panic.active) {
         s.x = p.x; s.y = p.y; s.z = p.z; s.time = s.taskTime = 0; s.taskActive = false;
@@ -6807,7 +7189,7 @@
       climbFrameBudget = 2; climbTurn = -1;
       for (let i = 0; i < list.length; i++) {
         list[i].climb.searchBudget = 2;
-        if (!list[i].rage.warpWaiting) pendingClimbSearch(list[i]);
+        if (!list[i].remoteControlled && !list[i].rage.warpWaiting) pendingClimbSearch(list[i]);
       }
       for (let i = 0; i < list.length; i++) {
         const index = (climbNext + i) % list.length, e = list[index], c = e.climb;
@@ -6833,7 +7215,7 @@
         }
         for (let i = 0; i < list.length; i++) {
           updateEntry(list[i], step);
-          if (!list[i].rage.active) recoverStall(list[i], step);
+          if (!list[i].remoteControlled && !list[i].rage.active) recoverStall(list[i], step);
         }
       }
     };
@@ -6849,10 +7231,10 @@
         || e.phase !== "work" && !(e.phase === "travel" && e.route === "enter")) return false;
       const p = e.root.position;
       if (e.site === labSite ? !insideLab(p.x, p.y, p.z) : caveAt(p.x, p.y, p.z) !== cave.work.site) return false;
-      if (e.site === labSite) {
+      if (e.site === labSite || officeOf[e.site]) {
         // The entrance transforms incoming bananas; desk workers are never
         // projectile targets behind equipment or another scientist.
-        sitePoint(sites[labSite], Math.sin((sample + e.index) * 2.39996323) * 1.8, 0.5, out);
+        sitePoint(sites[e.site], Math.sin((sample + e.index) * 2.39996323) * 1.8, 0.5, out);
         out.y += 1.3 + (Math.sin(sample * 1.7 + e.index) * 0.5 + 0.5);
         return true;
       }
@@ -6863,7 +7245,7 @@
       const e = byOwner.get(cave);
       if (!e || !e.active) return false;
       e.activity = Math.min(9, e.activity + 1); e.hits++;
-      if (e.site !== labSite && e.activity >= 3) e.rest = Math.min(e.rest, 0.7);
+      if (e.site !== labSite && !officeOf[e.site] && e.activity >= 3) e.rest = Math.min(e.rest, 0.7);
       return true;
     };
     const damage = (entry, power) => {
@@ -6918,7 +7300,7 @@
     };
     return { list, sync, update, target, companionTarget, hit, damage, bananaHit, debugRage, plan, startLabShuttle, debugMove, cancelDebugMove, stats, liveGeometry, dispose, contactAt,
       debugLoungeSpots,
-      possess, release, respawn, control, cancelInput, smash, smashPower, quickSmash, chestBeat, ignite, dropRoll, supportRemoved,
+      possess, release, sleeping, wake, setRemote, createRemote, respawn, travelRefusal, travel, control, cancelInput, smash, smashPower, quickSmash, chestBeat, ignite, dropRoll, supportRemoved,
       get player() { return player; } };
   };
   BL.clankers = { create, rageCarrying, WALK_RADIUS, WALK_HEIGHT, PROP_STEP, RAGE_SPEED };

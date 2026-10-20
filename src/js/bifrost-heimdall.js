@@ -412,7 +412,7 @@
 
   // ---- what he says ----------------------------------------------------------------------------------
 
-  // Each fits a bubble; he says them in turn.
+  // He says them in turn.
   const GREETINGS = [
     "Hail, traveller! ₿IFRÖST awaits.", "I heard you coming three blocks ago.", "Well met, Ooga. Mind the rainbow.",
     "I saw you from nine worlds away.", "Welcome. Wipe your feet, it's a rainbow.", "Hail, Ooga! Few cross. You may."
@@ -427,7 +427,6 @@
     "Gjallarhorn sounds at every halving.", "Heard in all nine worlds. Hi!", "Loud enough to wake a sleeping node.",
     "Not Ragnarök. Just saying hello.", "That one's for the next block!", "The gods know you're here now."
   ];
-  for (const line of [...GREETINGS, ...MUTTERS, ...BLASTS]) if ([...line].length > 42) throw new Error(`Heimdall's line is too long for a bubble: ${line}`);
 
   // ---- Gjallarhorn's voice -----------------------------------------------------------------------------
 
@@ -437,7 +436,7 @@
   // away; another is refused while one sounds. Once a blast has died the context sleeps, so an idle horn costs nothing.
   const MUTE_KEY = "oogaboogaland.audio";
   const SOUND = { hz: [110, 165], master: 0.5, peak: 0.2, hold: 1.4, end: 2.2 };
-  const noop = () => {};
+  const noop = () => { };
   const hornVoice = () => {
     let ctx = null, gain = null, filter = null, lfo = null, until = 0, asleep = false;
     const oscs = [];

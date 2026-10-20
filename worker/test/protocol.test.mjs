@@ -1,26 +1,42 @@
 // Pure checks on the room's wire format and limits: no Durable Object, no sockets.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BOUND_XZ, MESSAGE_MAX, MOVE_HZ, parseClientMessage, playerFromHeaders, spawnPoint, takeToken } from "../src/protocol.js";
+import { BOUND_XZ, BOUND_Y_MIN, BOUND_Y_MAX, MESSAGE_MAX, MOVE_HZ, parseClientMessage, playerFromHeaders, spawnPoint, takeToken } from "../src/protocol.js";
 
 test("poses inside the bounds are accepted, rounded and their yaw wrapped", () => {
   const m = parseClientMessage(JSON.stringify({ t: "pose", x: 1.23456, y: -7, z: 3, yaw: 7 }));
   assert.equal(m.t, "pose");
   assert.equal(m.x, 1.235);
   assert.ok(Math.abs(m.yaw - (7 - 2 * Math.PI)) < 1e-3);
+  for (const y of [BOUND_Y_MIN, 45, BOUND_Y_MAX]) {
+    assert.equal(parseClientMessage(JSON.stringify({ t: "pose", x: BOUND_XZ, y, z: -BOUND_XZ, yaw: 0 })).y, y,
+      "climbing and airborne companions use the existing body's full height bounds");
+  }
+  const g = parseClientMessage(JSON.stringify({ t: "pose", x: 0, y: 25, z: 0, yaw: 0, g: [127, 30, -2e6, 2, -2, 3] }));
+  assert.deepEqual(g.g, [127, 20, -1e6, 1, -1, 1], "gorilla locomotion, including sleep, is bounded independently of position");
 });
 
 test("poses out of bounds or not numbers are ignored, not fatal", () => {
   for (const bad of [{ x: BOUND_XZ + 1, y: 0, z: 0, yaw: 0 }, { x: 0, y: 500, z: 0, yaw: 0 }, { x: "1", y: 0, z: 0, yaw: 0 }, { x: 0, y: 0, z: 0 }]) {
     assert.equal(parseClientMessage(JSON.stringify({ t: "pose", ...bad })), null, JSON.stringify(bad));
   }
+  for (const g of [null, {}, [], [4, 0, 0, 0, 0], [4, 0, 0, 0, 0, 0, 0], [128, 0, 0, 0, 0, 0], [-1, 0, 0, 0, 0, 0],
+    [0.5, 0, 0, 0, 0, 0], [4, "1", 0, 0, 0, 0], [4, 0, null, 0, 0, 0]]) {
+    assert.equal(parseClientMessage(JSON.stringify({ t: "pose", x: 0, y: 0, z: 0, yaw: 0, g })), null, JSON.stringify(g));
+  }
 });
 
-test("a body is an Ooga name or null; anything else is ignored", () => {
+test("a body is an Ooga name, its prefixed gorilla, or null; anything else is ignored", () => {
   assert.deepEqual(parseClientMessage('{"t":"body","name":"w-s-bitcoin"}'), { t: "body", name: "w-s-bitcoin" });
+  assert.deepEqual(parseClientMessage('{"t":"body","name":"gorilla:w-s-bitcoin"}'), { t: "body", name: "gorilla:w-s-bitcoin" });
+  const longest = "gorilla:" + "a".repeat(40);
+  assert.deepEqual(parseClientMessage(JSON.stringify({ t: "body", name: longest })), { t: "body", name: longest });
   assert.deepEqual(parseClientMessage('{"t":"body","name":null}'), { t: "body", name: null });
   assert.equal(parseClientMessage('{"t":"body","name":"<b>"}'), null);
   assert.equal(parseClientMessage('{"t":"body","name":""}'), null);
+  for (const name of ["gorilla:", "gorilla:<b>", "gorilla:gorilla:ooga", "Gorilla:ooga", "gorilla:" + "a".repeat(41)]) {
+    assert.equal(parseClientMessage(JSON.stringify({ t: "body", name })), null, name);
+  }
 });
 
 test("unknown types are ignored; unreadable or oversized frames close the socket", () => {
@@ -60,35 +76,51 @@ test("identity comes only from the Worker's headers, all or nothing", () => {
   assert.equal(playerFromHeaders(h({ "x-player-id": "42" })), null);
 });
 
-test("who may drive which Ooga: owners only their own, others only while the owner is away and nobody holds it", async () => {
-  const { castIndex, claimRefusal } = await import("../src/protocol.js");
+test("body ownership: only an Ooga owner may join and claim their own Ooga or gorilla", async () => {
+  const { castIndex, claimRefusal, ownedBody } = await import("../src/protocol.js");
   const cast = castIndex([
     { handle: "bc1gui", github_login: "ottoz0r" },
     { handle: "portlandhodl", github_login: "portlandhodl" },
     { handle: "rules-without-rulers", github_login: "rules-without-rulers" },
   ]);
   const room = (...players) => players.map(([login, body = null]) => ({ login, body }));
+  assert.equal(ownedBody(cast, "OTTOZ0R"), "bc1gui");
+  assert.equal(ownedBody(cast, "visitor"), null);
+  assert.equal(ownedBody(cast, "new-ooga", true), "new-ooga");
+  assert.equal(ownedBody(cast, "bc1gui", true), null, "a verified contributor cannot shadow another owner's alias");
   // A contributor, known by GitHub login: their own Ooga, and nothing else.
   assert.equal(claimRefusal(cast, "ottoz0r", "bc1gui", room()), null);
   assert.equal(claimRefusal(cast, "OTTOZ0R", "BC1GUI", room()), null);
   assert.equal(claimRefusal(cast, "ottoz0r", "portlandhodl", room()), "not-yours");
   // A handle is a name, not a login: another account called bc1gui owns nothing.
-  assert.equal(claimRefusal(cast, "bc1gui", "bc1gui", room(["ottoz0r"])), "owner-here");
-  // A visitor: only while the owner is away and nobody else holds it.
-  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room()), null);
-  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room(["portlandhodl"])), "owner-here");
-  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room(["someone", "portlandhodl"])), "taken");
-  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room(["visitor", "portlandhodl"])), null);
-  assert.equal(claimRefusal(cast, "visitor", "nobody-real", room()), "unknown");
+  assert.equal(claimRefusal(cast, "bc1gui", "bc1gui", room(["ottoz0r"])), "not-yours");
+  // An old guest session never gains a body, even if nobody else is present.
+  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room()), "not-yours");
+  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room(["portlandhodl"])), "not-yours");
+  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room(["someone", "portlandhodl"])), "not-yours");
+  assert.equal(claimRefusal(cast, "visitor", "portlandhodl", room(["visitor", "portlandhodl"])), "not-yours");
+  assert.equal(claimRefusal(cast, "visitor", "nobody-real", room()), "not-yours");
   assert.equal(claimRefusal(cast, "visitor", null, room(["portlandhodl"])), null);
   // Eligibility is a Worker-vouched flag, persisted in the room's attachment.
-  assert.equal(claimRefusal(cast, "new-ooga", "new-ooga", room()), "unknown");
+  assert.equal(claimRefusal(cast, "new-ooga", "new-ooga", room()), "not-yours");
   assert.equal(claimRefusal(cast, "new-ooga", "NEW-OOGA", room(), true), null);
   assert.equal(claimRefusal(cast, "new-ooga", "portlandhodl", room(), true), "not-yours");
-  assert.equal(claimRefusal(cast, "visitor", "new-ooga", room(["new-ooga", "new-ooga"])), "unknown");
+  assert.equal(claimRefusal(cast, "visitor", "new-ooga", room(["new-ooga", "new-ooga"])), "not-yours");
   assert.equal(claimRefusal(cast, "ottoz0r", "ottoz0r", room(), true), "not-yours");
   assert.equal(claimRefusal(cast, "ottoz0r", "bc1gui", room(), true), null);
-  assert.equal(claimRefusal(cast, "bc1gui", "bc1gui", room(["ottoz0r"]), true), "owner-here");
+  assert.equal(claimRefusal(cast, "bc1gui", "bc1gui", room(["ottoz0r"]), true), "not-yours");
+  // The prefix chooses the companion, never a different identity or permission.
+  assert.equal(claimRefusal(cast, "ottoz0r", "gorilla:bc1gui", room()), null);
+  assert.equal(claimRefusal(cast, "OTTOZ0R", "gorilla:BC1GUI", room()), null);
+  assert.equal(claimRefusal(cast, "ottoz0r", "gorilla:portlandhodl", room()), "not-yours");
+  assert.equal(claimRefusal(cast, "ottoz0r", "gorilla:ottoz0r", room(), true), "not-yours", "canonical handle, not its login alias");
+  assert.equal(claimRefusal(cast, "visitor", "gorilla:portlandhodl", room()), "not-yours", "a signed-in visitor cannot borrow a gorilla");
+  assert.equal(claimRefusal(cast, "visitor", "gorilla:portlandhodl", room(["portlandhodl", "gorilla:portlandhodl"])), "not-yours");
+  assert.equal(claimRefusal(cast, "visitor", "gorilla:nobody-real", room()), "not-yours");
+  assert.equal(claimRefusal(cast, "new-ooga", "gorilla:new-ooga", room()), "not-yours");
+  assert.equal(claimRefusal(cast, "new-ooga", "gorilla:NEW-OOGA", room(), true), null);
+  assert.equal(claimRefusal(cast, "new-ooga", "gorilla:portlandhodl", room(), true), "not-yours");
+  assert.equal(claimRefusal(cast, "bc1gui", "gorilla:bc1gui", room(), true), "not-yours", "temporary identity cannot shadow a curated alias");
 });
 
 test("voice: players driving an Ooga hear each other while in the same place; nobody else does", async () => {
@@ -109,6 +141,10 @@ test("voice: players driving an Ooga hear each other while in the same place; no
   assert.deepEqual(peers.get(4), [], "not driving an Ooga hears nobody");
   assert.deepEqual(peers.get(5), [1, 2, 6], "listening without a microphone is allowed");
   assert.deepEqual(peers.get(6), [], "no receiving session, nothing to hear");
+  players[0].body = "gorilla:bc1gui";
+  assert.deepEqual(voicePeers(players).get(1), [2, 6], "switching to own gorilla keeps same-zone voice");
+  players[0].body = null;
+  assert.deepEqual(voicePeers(players).get(1), [], "detaching from a gorilla releases voice eligibility");
   assert.deepEqual(parseClientMessage('{"t":"zone","name":"cave-lab"}'), { t: "zone", name: "cave-lab" });
   assert.equal(parseClientMessage('{"t":"zone","name":"Cave Lab!"}'), null);
   assert.deepEqual(parseClientMessage('{"t":"mute","on":true}'), { t: "mute", on: true }, "a muted microphone reaches every roster");
@@ -132,6 +168,30 @@ test("voice zones: a group shares voice across its places; nobody is heard from 
   assert.deepEqual(parseClientMessage('{"t":"zone","name":"factory.hall"}'), { t: "zone", name: "factory.hall" });
   assert.equal(parseClientMessage('{"t":"zone","name":"a.b.c"}'), null);
   assert.equal(parseClientMessage('{"t":"zone","name":".hall"}'), null);
+});
+
+test("Sphere rooms isolate voice by number and doorway frames are strictly bounded", async () => {
+  const { voicePeers } = await import("../src/protocol.js");
+  const on = { pub: "p", sub: "s", track: "mic" };
+  const p = (id, zone) => ({ id, body: `ooga-${id}`, zone, voice: on });
+  const peers = voicePeers([p(1, "sphere-1"), p(2, "sphere-1"), p(3, "sphere-2"), p(4, "sphere"), p(5, "sphere-9")]);
+  assert.deepEqual(peers.get(1), [2]);
+  assert.deepEqual(peers.get(2), [1]);
+  assert.deepEqual(peers.get(3), []);
+  assert.deepEqual(peers.get(4), []);
+  assert.deepEqual(peers.get(5), []);
+
+  assert.deepEqual(parseClientMessage('{"t":"door","op":"ask","dir":"in","room":7}'), { t: "door", op: "ask", dir: "in", room: 7 });
+  assert.deepEqual(parseClientMessage('{"t":"door","op":"go","cycle":"abc_123"}'), { t: "door", op: "go", cycle: "abc_123" });
+  assert.deepEqual(parseClientMessage('{"t":"door","op":"done","cycle":"abc-123"}'), { t: "door", op: "done", cycle: "abc-123" });
+  assert.deepEqual(parseClientMessage('{"t":"door","op":"cancel","extra":true}'), { t: "door", op: "cancel" });
+  assert.deepEqual(parseClientMessage('{"t":"door","op":"pass","door":"sphere-9","dir":"out"}'), { t: "door", op: "pass", door: "sphere-9", dir: "out" });
+  for (const bad of [
+    { t: "door", op: "ask", dir: "in", room: 0 }, { t: "door", op: "ask", dir: "side", room: 1 },
+    { t: "door", op: "go", cycle: "bad cycle" }, { t: "door", op: "done", cycle: "x".repeat(65) },
+    { t: "door", op: "pass", door: "sphere-10", dir: "in" }, { t: "door", op: "pass", door: "sphere-1", dir: "side" },
+    { t: "door", op: "open" },
+  ]) assert.equal(parseClientMessage(JSON.stringify(bad)), null, JSON.stringify(bad));
 });
 
 test("health: a driven Ooga's health is clamped to 0-100 and needs its knocked-out flag", async () => {

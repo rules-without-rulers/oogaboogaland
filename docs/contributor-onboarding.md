@@ -120,12 +120,20 @@ that checker from a base branch where it does not yet exist.
 
 ## Signing in before the next merge
 
-GitHub OAuth still supplies the authenticated identity; only a `User` profile is
-accepted. `/api/me` and `/room` independently look up that login in the same
-filtered Oogatron snapshot. Lookups coalesce and cache for one minute per Worker
-isolate, run only on requests, time out after four seconds, and grant no new
-identity on failure. No background polling, new secret or D1 migration is needed
-for sign-in. The separate [character bundle pipeline](character-bundles.md) uses
+GitHub OAuth supplies the authenticated identity; only a `User` profile with an
+owned Ooga can sign in. The Worker first matches the bundled character's owning
+GitHub login, independent of the live feed. Otherwise the filtered Oogatron
+snapshot must verify at least one commit for a temporary character; a login that
+collides with somebody else's character handle is refused. The callback checks
+this before writing a player or session. Ordinary session reads recheck the same
+rule for `/api/me`, `/room`, voice and signed-in donation attribution, so historical
+guest cookies cannot retain access. Logout and account deletion still accept a
+valid historical session for removal alone.
+
+Live lookups coalesce and cache for one minute per Worker isolate, run only on
+requests, time out after four seconds, and grant no identity on failure. No
+background polling, new secret or D1 migration is needed for sign-in. The
+separate [character bundle pipeline](character-bundles.md) uses
 a repository-scoped GitHub App for protected daily and manual-review PRs.
 
 Before building the first scene, the browser waits for the bounded account lookup
@@ -145,8 +153,10 @@ This sign-in feature needs a Cloudflare Worker deployment. The existing staging
 and production deployment workflows remain manual; merging alone does not deploy
 either Worker. GitHub Pages and local files continue to run without an account
 backend. A newly recorded contributor may need to reload after Oogatron's next
-snapshot/cache refresh; an upstream outage leaves existing sign-in and characters
-available without granting an unverified new character.
+snapshot/cache refresh. Bundled owners remain eligible during an upstream outage;
+unbundled owners cannot authenticate requests until the cached lookup can verify
+them again. An accepted room socket retains its verified contributor flag while
+connected; the room does not poll Oogatron, and reconnect checks eligibility anew.
 
 ## Validation
 

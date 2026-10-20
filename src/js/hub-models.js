@@ -1,5 +1,5 @@
 // Hub props; each builder returns one cached geometry shared by every instance: cave rim, gate, shelves,
-// sign, lantern, trees, bushes, grass, rocks, barrels, torches, fire pit, clouds, dock and the critter
+// sign, trees, bushes, grass, rocks, barrels, torches, fire pit, clouds, dock and the critter
 // bodies.
 //
 // `SIGN_GLYPHS` is the blocky 3x5 alphabet every carved sign in the world is cut from, the Mempool cave's
@@ -134,7 +134,8 @@
     bolt: ["...##", "..##.", ".##..", "#####", "..##.", ".##..", "##..."],
     die: ["#####", "#...#", "#.#.#", "#...#", "#.#.#", "#...#", "#####"],
     glyph: ["#.##.", "##..#", ".#.#.", "#..##", ".##.#", "#.#..", "##.##"],
-    banana: ["....#", "...##", "..##.", ".##..", "##...", "#....", "....."]
+    banana: ["....#", "...##", "..##.", ".##..", "##...", "#....", "....."],
+    abacus: ["#####", "##..#", "#.#.#", "#..##", "##..#", "#####", "#...#"]
   };
   // The sign emblems: 7x7 art in named inks, ringed in a dark outline worked out from the art itself.
   const SIGN_BADGES = {
@@ -144,9 +145,13 @@
     pick: { ink: { "I": "#c9ced6", "+": "#eef1f5", "H": "#a8703e" }, rows: ["..+II..", ".I.H.I.", "I..H..I", "...H...", "...H...", "...H...", "...H..."] },
     glyph: { ink: { "#": "#46ff72" }, rows: [".#.##..", ".##..#.", "..#.#..", ".#..##.", "..##.#.", ".#.#...", ".##.##."] },
     banana: { ink: { "#": "#f5d142", "+": "#fff3a0", "S": "#6b4a26" }, rows: [".....S.", ".....##", "....+#.", "...+##.", "..+##..", "#+##...", ".##...."] },
+    // Ooga Arcade: the space invader from its banners' marquee.
+    invader: { ink: { "#": "#fff1b0" }, rows: ["..#.#..", "...#...", "..###..", ".#.#.#.", "#######", "#.###.#", "#.#.#.#"] },
     joystick: { ink: { "R": "#e0452b", "+": "#ff9c86", "H": "#efe6d2", "#": "#c9ced6" }, rows: ["..+RR..", "..RRR..", "...H...", "...H...", "...H...", "#######", ".#####."] },
     chute: { ink: { "#": "#e0452b", "+": "#f2efe8", "L": "#f2efe8", "S": "#f5d142" }, rows: ["..###..", ".#+#+#.", "#+#+#+#", "L.....L", ".L...L.", "..LSL..", "...S..."] },
-    rocket: { ink: { "#": "#f2efe8", "R": "#e0452b", "W": "#7fe0ff", "F": "#ffb02e" }, rows: ["...R...", "..RRR..", "..#W#..", "..###..", ".R###R.", "R.#F#.R", "...F..."] }
+    rocket: { ink: { "#": "#f2efe8", "R": "#e0452b", "W": "#7fe0ff", "F": "#ffb02e" }, rows: ["...R...", "..RRR..", "..#W#..", "..###..", ".R###R.", "R.#F#.R", "...F..."] },
+    // B.C.A.: a walnut abacus whose beads are bananas and ivory, on brass rods.
+    abacus: { ink: { "W": "#8a5a32", "-": "#d9b45a", "Y": "#f5d142", "I": "#f2efe8" }, rows: ["WWWWWWW", "WYY--IW", "W-IY-YW", "WI--YYW", "WYI--IW", "WWWWWWW", "W.....W"] }
   };
   const BADGE_OUTLINE = "#2a1a0c", BADGE_CELLS = 9;
   const BADGE_CELL = SIGN_CELL * 5 / 7, BADGE_GAP = SIGN_CELL * 2;
@@ -177,10 +182,11 @@
   // below, the name raised in faintly glowing cream on one dark stained panel so it reads day and night and
   // from across the island (solid letters and one panel, nothing thin enough to break up at distance), the
   // cave's badge before it (badge and name centred as one group) and iron plates on the corners. A second
-  // cached version leaves small gaps between square letter cells for close views. The front face sits at SIGN_FRONT and nothing reaches behind
+  // cached version leaves small gaps between square letter cells for close views. `lit` makes the name and the
+  // badge glow outright, as the island's cave mouths hang them. The front face sits at SIGN_FRONT and nothing reaches behind
   // z = -0.07, so it hangs where the old board did.
-  const caveSign = (text = "EntropyLab", iconName = null, pixels = false) => {
-    const key = `${text}|${iconName || ""}|${pixels ? "pixels" : "solid"}`;
+  const caveSign = (text = "EntropyLab", iconName = null, pixels = false, lit = false) => {
+    const key = `${text}|${iconName || ""}|${pixels ? "pixels" : "solid"}${lit ? "|lit" : ""}`;
     const hit = SIGN_CACHE.get(key);
     if (hit) return hit;
     let cells = -1;
@@ -196,7 +202,7 @@
     // The badge leads the name; the pair is centred together, so the name moves right by half the badge and its gap.
     const shift = iconName ? (iconW + BADGE_GAP) * 0.5 : 0;
     const half = CAVE_SIGN_HEIGHT * 0.5, plankH = (CAVE_SIGN_HEIGHT - 0.04) / 3, depth = 0.3, mid = SIGN_FRONT - depth / 2;
-    const geos = [];
+    const geos = [], ink = lit ? 1 : 0.25, badgeGlow = lit ? 1 : 0.35;
     // Posts first, so the planks cover them and only their ends show.
     for (const side of [-1, 1]) geos.push(bevelBox({ w: 0.2, h: CAVE_SIGN_HEIGHT + 0.44, d: 0.2, color: "#6b4524", offset: { x: side * (width * 0.5 - 0.42), y: 0.02, z: 0.03 } }));
     [[0.07, 0.03], [-0.05, -0.04], [0.11, 0.02]].forEach(([grow, shift], k) => {
@@ -206,7 +212,7 @@
     geos.push(bevelBox({ w: textW + (iconName ? iconW + BADGE_GAP : 0) + 0.14, h: 0.52 + 2 * SIGN_CELL, d: 0.035,
       color: "#3f2513", bevel: 0.012, offset: { x: 0, y: 0, z: SIGN_FRONT + 0.0125 } }));
     // Letters as solid horizontal runs of whole cells, touching row to row, so a glyph is one clean shape.
-    const run = (x0, y, n) => geos.push(box({ w: SIGN_CELL * n, h: SIGN_CELL, d: 0.07, color: SIGN_INK, emissive: 0.25, offset: { x: x0 + SIGN_CELL * (n - 1) * 0.5, y, z: SIGN_FRONT + 0.03 } }));
+    const run = (x0, y, n) => geos.push(box({ w: SIGN_CELL * n, h: SIGN_CELL, d: 0.07, color: SIGN_INK, emissive: ink, offset: { x: x0 + SIGN_CELL * (n - 1) * 0.5, y, z: SIGN_FRONT + 0.03 } }));
     let cursor = shift - textW * 0.5;
     for (const ch of text) {
       if (ch === " ") {
@@ -219,7 +225,7 @@
         for (let col = 0; col < line.length; col++) {
           if (line[col] !== "1") continue;
           if (pixels) {
-            geos.push(box({ w: SIGN_CELL * 0.84, h: SIGN_CELL * 0.84, d: 0.07, color: SIGN_INK, emissive: 0.25,
+            geos.push(box({ w: SIGN_CELL * 0.84, h: SIGN_CELL * 0.84, d: 0.07, color: SIGN_INK, emissive: ink,
               offset: { x: cursor + (col + 0.5) * SIGN_CELL, y: (2 - row) * SIGN_CELL, z: SIGN_FRONT + 0.03 } }));
             continue;
           }
@@ -237,7 +243,7 @@
         const cell = iconW / FAVICON_ROWS.length;
         for (let row = 0; row < FAVICON_ROWS.length; row++) for (let col = 0; col < FAVICON_ROWS[row].length; col++) {
           const color = FAVICON_INK[FAVICON_ROWS[row][col]];
-          if (color) geos.push(box({ w: cell, h: cell, d: 0.07, color, emissive: 0.35,
+          if (color) geos.push(box({ w: cell, h: cell, d: 0.07, color, emissive: badgeGlow,
             offset: { x: left + (col + 0.5) * cell, y: (7.5 - row) * cell, z: SIGN_FRONT + 0.03 } }));
         }
       } else {
@@ -246,7 +252,7 @@
         for (const cell of badge) { top = Math.min(top, cell[1]); bottom = Math.max(bottom, cell[1]); }
         const center = (top + bottom) * 0.5;
         for (const [col, row, color, proud] of badge) {
-          geos.push(box({ w: BADGE_CELL, h: BADGE_CELL, d: proud ? 0.07 : 0.045, color, emissive: proud ? 0.35 : 0,
+          geos.push(box({ w: BADGE_CELL, h: BADGE_CELL, d: proud ? 0.07 : 0.045, color, emissive: proud ? badgeGlow : 0,
             offset: { x: left + (col + 0.5) * BADGE_CELL, y: (center - row) * BADGE_CELL, z: SIGN_FRONT + (proud ? 0.03 : 0.0175) } }));
         }
       }
@@ -304,8 +310,6 @@
     // The grippable stone uses the same occupied slabs as the rendered voxels.
     // Keeping this small table avoids triangle queries in every wall probe.
     geo.climbBoxes = new Float32Array(climbBoxes);
-    geo.jambCenterX = 2.75;
-    geo.frontZ = 0;
     geo.openingBounds = { minX: -2.5, maxX: 2.5, floorY: 0, ceilingY: 3, minZ: -0.5, maxZ: 0 };
     return geo;
   });
@@ -384,7 +388,7 @@
   ));
   const matrixLeverLabels = cached(() => {
     const parts = [], cell = 0.022;
-    for (const [text, y] of [["ON", 0.37], ["OFF", -0.37]]) {
+    for (const [text, y] of [["OFF", 0.37], ["ON", -0.37]]) {
       const width = (text.length * 4 - 1) * cell;
       for (let i = 0; i < text.length; i++) {
         const glyph = SIGN_GLYPHS[text[i]];
@@ -1438,8 +1442,6 @@
       box({ w: 0.26, h: 0.26, d: 0.26, color: "#ffb13b", emissive: 1, offset: { y: 1.36 } })
     );
     geo.castShadow = false;
-    geo.backZ = -0.13;
-    geo.flameY = 1.36;
     return geo;
   });
   // A grass tuft, cartoon rather than voxel: seven tapered blades fanning out from one root, each a three-sided
@@ -1474,14 +1476,6 @@
   // The lawn's instanced batch takes the same tuft as its own geometry object, so it never shares a GPU record
   // with the scattered tufts.
   const lawnTuft = cached(() => ({ ...grassTuft() }));
-  // Lantern hangs below the origin; the origin is its hook.
-  const lantern = cached(() => noShadow(merge(
-    box({ w: 0.06, h: 0.08, d: 0.06, color: "#3a2a18", offset: { y: -0.04 } }),
-    box({ w: 0.24, h: 0.04, d: 0.24, color: "#2b2521", offset: { y: -0.1 } }),
-    ...[[-0.105, -0.105], [0.105, -0.105], [-0.105, 0.105], [0.105, 0.105]].map(([x, z]) => box({ w: 0.03, h: 0.3, d: 0.03, color: "#2b2521", offset: { x, y: -0.27, z } })),
-    box({ w: 0.24, h: 0.04, d: 0.24, color: "#2b2521", offset: { y: -0.44 } }),
-    box({ w: 0.13, h: 0.16, d: 0.13, color: "#ffd27a", emissive: 1, offset: { y: -0.27 } })
-  )));
   // Firepit geometry only; the flame is fireFlame.
   const firepit = cached(() => {
     const rand = mulberry32(131);
@@ -1593,5 +1587,5 @@
       ...[-0.8, 0.8].map(brace)
     );
   });
-  BL.hubModels = { SIGN_GLYPHS, SIGN_ICONS, AMMO_BANANA, jetpack, jetFlame, caveMouthRim, mirrorPanel, matrixPrisonBars, sealedCaveFace, matrixLeverPlate, matrixLeverLights, matrixLeverHub, matrixLeverArm, matrixLeverGrip, matrixLeverLabels, matrixGlyph, caveSign, postSign, CAVE_SIGN_WIDTH, CAVE_SIGN_HEIGHT, gate, caveShelves, entropyLab, bedroll, tree, bush, rock, breakableRock, voxelRock, puff, leafy, pointedLeaf, flower, FLOWER_INKS, limb, padNormals, flatInto, canopySupport, withJungle, liana, sagPoints, sprig, garland, bamboo, lashing, log, thatch, altarSlab, altarBlock, woodCrate, barrel, flowerTuft, torch, grass, lawnTuft, lantern, firepit, fireFlame, butterfly, firefly, ember, vine, cloud, ladder, dock, TREE_HEIGHT };
+  BL.hubModels = { SIGN_GLYPHS, SIGN_ICONS, AMMO_BANANA, jetpack, jetFlame, caveMouthRim, mirrorPanel, matrixPrisonBars, sealedCaveFace, matrixLeverPlate, matrixLeverLights, matrixLeverHub, matrixLeverArm, matrixLeverGrip, matrixLeverLabels, matrixGlyph, caveSign, postSign, CAVE_SIGN_WIDTH, CAVE_SIGN_HEIGHT, gate, caveShelves, entropyLab, bedroll, tree, bush, rock, breakableRock, voxelRock, puff, leafy, pointedLeaf, flower, FLOWER_INKS, limb, padNormals, flatInto, canopySupport, withJungle, liana, sagPoints, sprig, garland, bamboo, lashing, log, thatch, altarSlab, altarBlock, woodCrate, barrel, flowerTuft, torch, grass, lawnTuft, firepit, fireFlame, butterfly, firefly, ember, vine, cloud, ladder, dock, TREE_HEIGHT };
 })();

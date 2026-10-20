@@ -30,7 +30,7 @@
       item: $("race-item"), itemName: $("race-item-name"), boost: $("race-boost-fill"), pips: $("race-pips"), speed: $("race-speed"), mirror: $("garage-mirror"),
       center: $("race-center"), notice: $("race-notice"), itemBtn: $("item-btn"), results: $("race-results"), podium: $("race-podium"), summary: $("race-summary"), pause: $("race-pause"), garageBtn: $("race-garage-btn"), mute: $("race-mute"),
       cupNote: $("race-cup-note"), standingsHead: $("race-standings-head"), standings: $("race-standings"), next: $("race-next"), garageCup: $("garage-cup"),
-      hudLeft: document.querySelector(".race-hud-left"), joyLook: $("joy-look")
+      hudLeft: document.querySelector(".race-hud-left"), pickOoga: $("garage-pick-ooga"), joyLook: $("joy-look")
     };
     const listeners = [];
     const on = (target, type, fn) => {
@@ -48,6 +48,23 @@
       selection[kind] = key;
       mark(kind);
       if (onPick) onPick(kind, key);
+    };
+    // A signed-in visitor with an Ooga races it, as they drive only it on the island: their row stands alone
+    // in the Ooga column (moved last, so it keeps no divider) and the help stops offering a pick. `null`
+    // brings every row back in roster order. Only a change of name touches the list.
+    let lockedTo;
+    const lockRacer = (name) => {
+      if (name === lockedTo) return;
+      lockedTo = name;
+      for (const [key, b] of buttons.racer) {
+        b.parentElement.hidden = !!name && key !== name;
+        el.racers.append(b.parentElement);
+      }
+      el.pickOoga.hidden = !!name;
+      if (!name) return;
+      el.racers.append(buttons.racer.get(name).parentElement);
+      selection.racer = name;
+      mark("racer");
     };
     const row = (kind, key, build) => {
       const li = document.createElement("li");
@@ -224,6 +241,11 @@
       li.append(name, value);
       return li;
     };
+    // Centres a row in a box that scrolls; a box that does not scroll keeps its place.
+    const reveal = (box, row) => {
+      const top = row.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+      box.scrollTop = top - (box.clientHeight - row.offsetHeight) / 2;
+    };
     // rows: this race; standings: cup points so far; next: label for the next-race button, or null.
     const results = (rows, summary, { note = "", standings = null, next = null } = {}) => {
       el.podium.replaceChildren(...rows.map((r) => podiumRow(r, r.finished ? `${r.estimated ? "≈ " : ""}${formatTime(r.time)}` : "DNF")));
@@ -236,6 +258,11 @@
       el.summary.textContent = summary;
       refreshTracks();
       show("results");
+      // The tables can be longer than the card, so each opens at the visitor's row, and so does the card.
+      const you = el.podium.querySelector(".you");
+      reveal(el.podium, you);
+      if (standings) reveal(el.standings, el.standings.querySelector(".you"));
+      reveal(el.results, you);
     };
     const setCup = (cup) => {
       el.garageCup.hidden = !cup;
@@ -324,7 +351,7 @@
       buttons.track.clear();
       trackRows.clear();
     };
-    return { el, selection, buildGarage, refreshTracks, show, setRank, setLap, setTime, setItem, setBoost, setPips, setSpeed, center, notice, results, setCup, minimap, speedLines, formatTime, medalFor, dispose };
+    return { el, selection, buildGarage, lockRacer, refreshTracks, show, setRank, setLap, setTime, setItem, setBoost, setPips, setSpeed, center, notice, results, setCup, minimap, speedLines, formatTime, medalFor, dispose };
   };
   BL.raceHud = { create, formatTime, medalFor };
 })();

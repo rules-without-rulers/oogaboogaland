@@ -867,6 +867,7 @@ body[data-active-scene="arcade"] .magazine-hud {
 }
 
 .banana-totals,
+.banana-rates,
 .banana-board {
   border-top: 1px solid rgba(0, 0, 0, 0.4);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
@@ -882,6 +883,52 @@ body[data-active-scene="arcade"] .magazine-hud {
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+
+.banana-rates {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: 6px 12px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+}
+
+.banana-rate-label {
+  position: relative;
+  padding-left: 11px;
+  color: rgba(243, 239, 228, 0.58);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.banana-rates > dt:nth-of-type(2) { align-self: center; }
+
+.banana-rate-label[data-tone="live"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.banana-rates dd {
+  margin: 0;
+  color: var(--paper);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.banana-exchange { position: relative; padding-left: 19px; }
+.banana-exchange-icon { position: absolute; left: 0; top: 50%; width: 14px; height: 14px; transform: translateY(-50%); }
+.banana-exchange > span + span { margin-left: 5px; }
 
 .banana-board { margin-top: 12px; padding-top: 12px; }
 
@@ -1312,6 +1359,40 @@ body[data-active-scene="arcade"] .magazine-hud {
   background: rgba(0, 0, 0, 0.6);
 }
 
+.donation-popup {
+  width: 440px;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+}
+
+/* The kiosk draws the name and message on its own screen. These fields only take the typing, so they stay in the
+   page, focusable, a phone's keyboard able to open on them, but out of sight; 16px keeps iOS from zooming in. */
+#donation-fields {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#donation-fields input { font-size: 16px; }
+
+#donation-screen {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+  border-radius: 6px;
+}
+
+#donation-screen:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .modal h2 {
   margin: 0 0 12px;
   font-size: 14px;
@@ -1622,10 +1703,6 @@ body[data-active-scene="arcade"] .magazine-hud {
   margin-top: 14px;
 }
 
-.actions.feed-go {
-  grid-template-columns: 1fr;
-}
-
 .actions button {
   min-height: 38px;
   padding: 0 10px;
@@ -1778,7 +1855,7 @@ body[data-active-scene="arcade"] .magazine-hud {
   cursor: not-allowed;
 }
 
-/* The drawer's foot: the account and voice on the left, the renderer and the demo reset quietly on the right. */
+/* The drawer's foot: account and voice controls above a separate, centred renderer and demo-reset row. */
 .sheet-foot {
   display: flex;
   flex-wrap: wrap;
@@ -1794,8 +1871,9 @@ body[data-active-scene="arcade"] .magazine-hud {
 
 .account {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 100%;
   align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 6px 10px;
   min-width: 0;
@@ -1841,6 +1919,7 @@ body[data-active-scene="arcade"] .magazine-hud {
 .account-actions {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 6px 10px;
 }
@@ -1881,9 +1960,10 @@ body[data-active-scene="arcade"] .magazine-hud {
 
 .sheet-foot-meta {
   display: inline-flex;
+  flex: 0 0 100%;
   align-items: center;
+  justify-content: center;
   gap: 10px;
-  margin-left: auto;
 }
 
 @media (pointer: coarse) {
@@ -2348,34 +2428,9 @@ body[data-active-scene="arcade"] .magazine-hud {
   position: absolute;
   left: 50%;
   top: 2px;
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   transform: translateX(-50%);
-}
-
-.detached-destinations {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 38px;
-  display: flex;
-  justify-content: center;
-  gap: 5px;
-  pointer-events: auto;
-}
-
-.detached-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #77736d;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.65);
-  transition: background-color 0.4s ease-out;
-}
-
-.detached-dot[data-current="true"] {
-  background: var(--accent);
-  transition-duration: 0s;
 }
 
 .detached-destination-name {
@@ -2946,6 +3001,32 @@ body[data-active-scene="arcade"] .magazine-hud {
   left: 50%;
   bottom: calc(122px + var(--safe-bottom));
   transform: translateX(-50%);
+}
+
+/* Tess's island offer and tour: the two choices share a row, and on tour the panel sits low, clear of the landmarks but above the toasts and the drawer's pull tabs. */
+.greeter-row {
+  display: flex;
+  gap: 6px;
+}
+
+.greeter-row .greeter-choice {
+  flex: 1;
+  white-space: nowrap;
+}
+
+/* While her tour holds the view the touch sticks do nothing, so they step aside for her panel. */
+body.tess-touring #joy-move,
+body.tess-touring #joy-look {
+  visibility: hidden;
+}
+
+/* On tour the heading is two lines on purpose: where in the tour, then the stop's name. */
+.greeter-menu.greeter-tour .greeter-menu-title {
+  white-space: pre-line;
+}
+
+.greeter-menu.greeter-tour {
+  bottom: calc(60px + var(--safe-bottom));
 }
 
 .race {
@@ -3529,6 +3610,23 @@ body[data-active-scene="arcade"] .magazine-hud {
   border-radius: 0;
   box-shadow: none;
   object-fit: contain;
+  cursor: pointer;
+}
+
+.board-floating.board-controls-hidden[open] {
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.board-floating.board-controls-hidden .panel-head,
+.board-floating.board-controls-hidden .board-nav,
+.board-floating.board-controls-hidden .board-resize {
+  visibility: hidden;
+}
+
+.board-floating.board-controls-hidden .board-screen {
+  pointer-events: auto;
 }
 
 .board-floating .board-nav {
@@ -4005,6 +4103,24 @@ body[data-active-scene="arcade"] .magazine-hud {
 
 .race-podium li.you {
   color: #f5c542;
+}
+
+/* A race's table and, in a cup, the standings under it can outgrow the window: the card holds to it and
+   its tables give up their height, each scrolling on its own (the HUD opens them at the visitor's row). A
+   window too short for that scrolls the card instead. */
+#race-results:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - 32px - var(--safe-top) - var(--safe-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (min-height: 600px) {
+  #race-results .race-podium {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
 }
 
 .race-pause .actions {
@@ -8521,7 +8637,20 @@ body.dsb-menu-open :is(.bottom-hud,.top-hud,#joy-move,#joy-look,#act,.weapon-hud
 /* Bottom-anchored drawers grow upward, with the resize grip just inside their top edge. */
 @media (max-width: 720px), (max-height: 500px) and (orientation: landscape) {
   .sheet { padding-top: 12px; }
-  .sheet-resize { top: -3px; bottom: auto; }
+  .sheet-resize { top: 3px; bottom: auto; }
   .sheet-toggle-loot { top: -39px; left: 144px; height: 42px; }
   .sheet-toggle-chat { top: -39px; left: var(--sheet-chat-left); height: 42px; }
+}
+
+.sphere-mode {
+  align-self: center;
+  padding: 0 10px;
+  color: #f2a33a;
+  font: 700 11px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .sphere-mode { white-space: normal; max-width: 46vw; overflow-wrap: anywhere; }
 }

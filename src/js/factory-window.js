@@ -12,6 +12,8 @@
 // out along the one it left by, red ones coming back from a failed forward, the core's surge, the tanks' flashes and
 // sputters, the forge's heat, each line where the node has placed it. A live node later feeds that same node.
 // WebGL only: the canvas renderer's painter's sort cannot mask it, and the tunnel's dark wall stays its view.
+// The roof tube uses the same hall and node, turned upward above the cooker. Its circular terrain cut and iron
+// shaft mask the relief, with two slabs keeping the projected pieces inside the bore's footprint.
 (() => {
   "use strict";
   const BL = window.BL = window.BL || {};
@@ -43,6 +45,7 @@
 
   // Scratch for the frame: the eye in the mouth's frame, the relief, the hall to the world through it, and one part.
   const EYE = new Float64Array(3);
+  const TARGET = new Float64Array(3);
   const RELIEF = mat4.create(), TMP = mat4.create(), W = mat4.create(), PART = mat4.create(), PLACED = mat4.create();
   const SAT_POS = { x: 0, y: 0, z: 0 }, SAT_ROT = { x: 0, y: 0, z: 0 }, SAT_SCALE = { x: 1, y: 1, z: 1 };
   // Every batch's instance version, counted for the page, so a batch made on a later visit never repeats one its
@@ -65,7 +68,15 @@
   // its roof and across its width with MARGIN into the rock. Made once for the page, so every visit draws the same
   // geometries and one clip slab.
   let clipped = null;
-  const clippedFor = (mouth) => {
+  const clippedFor = (mouth, roof = null) => {
+    if (roof) {
+      const w = FM.hubWindow(), half = roof.radius + 0.02;
+      const clipSlab = new Float32Array([1 / half, 0, 0, -roof.x / half]);
+      const clipSlab2 = new Float32Array([0, 0, 1 / half, -roof.z / half]);
+      const clip = geo => ({ ...geo, projective: true, cutawayHide: false, clipMinY: roof.y - DEPTH - 0.05, clipMaxY: roof.y + 0.01, clipSlab, clipSlab2 });
+      return { hall: clip(w.hall), chamber: clip(w.chamber), fire: clip(w.fire), sat: clip(w.sat), satRed: clip(w.satRed),
+        blueDim: clip(w.tank.blueDim), blueLit: clip(w.tank.blueLit), orangeDim: clip(w.tank.orangeDim), orangeLit: clip(w.tank.orangeLit) };
+    }
     if (clipped && clipped.mouth === mouth) return clipped;
     const w = FM.hubWindow(), sr = Math.sin(mouth.ry), cr = Math.cos(mouth.ry), half = mouth.room.w / 2 + MARGIN;
     const clipSlab = new Float32Array([cr / half, 0, -sr / half, -(cr * mouth.x - sr * mouth.z) / half]);
@@ -89,16 +100,24 @@
 
   // The window at one mouth: `group` is the mouth's group, standing under the island's root, so its own placement is
   // the mouth's frame in the world; `node` is the page's factory node.
-  const create = ({ group, mouth, node }) => {
-    const stand = FM.hubWindow(), geo = clippedFor(mouth), e = LAYOUT.entrance, paths = stand.paths, tanks = stand.tanks;
+  const create = ({ group, mouth, node, roof = null }) => {
+    const stand = FM.hubWindow(), geo = clippedFor(mouth, roof), e = LAYOUT.entrance, paths = stand.paths, tanks = stand.tanks;
     const MOUTH = mat4.fromTRS(mat4.create(), group.position, group.rotation, group.scale), TO_MOUTH = mat4.invert(mat4.create(), MOUTH);
     // The hall's frame to the mouth's: the balcony's floor on the mouth's, its back edge at the shield.
     const HALL = mat4.create();
     HALL[13] = -e.y;
     HALL[14] = -EXIT_Z;
+    if (roof) {
+      // Rotate the window's normal upward and centre the hall on the cooker's ceiling intake.
+      HALL[5] = HALL[10] = 0; HALL[6] = 1; HALL[9] = -1;
+      HALL[12] = -LAYOUT.cooker.x - FM.COOK.lip[0];
+      HALL[13] = LAYOUT.cooker.z + FM.COOK.lip[2];
+      HALL[14] = AXIS - FM.HALL.h;
+    }
     // Every batch culls as the clip box, the only place any of it draws, which a mirror's capture tests too.
     const sr = Math.sin(mouth.ry), cr = Math.cos(mouth.ry), half = mouth.room.w / 2 + MARGIN, mid = AXIS - DEPTH / 2;
-    const sphere = [mouth.x + sr * mid, mouth.floorY + mouth.room.h / 2, mouth.z + cr * mid, Math.hypot(half, mouth.room.h / 2 + 0.05, DEPTH / 2) + 0.1];
+    const sphere = roof ? [roof.x, roof.y - DEPTH / 2, roof.z, Math.hypot(roof.radius + 0.03, DEPTH / 2) + 0.1]
+      : [mouth.x + sr * mid, mouth.floorY + mouth.room.h / 2, mouth.z + cr * mid, Math.hypot(half, mouth.room.h / 2 + 0.05, DEPTH / 2) + 0.1];
     // Every instance glows fully in its baked colours and keeps its own palette in the Matrix (mode 5); the sats are
     // highlighted as the hall's are.
     const batch = (geometry, capacity, highlight = 0) => {
@@ -111,7 +130,7 @@
       return createNode({ geometry, instanceData: data, instanceCount: 0, instanceVersion: version, fixedInstanceCapacity: true, cullSphere: sphere, visible: false });
     };
     const root = createNode({ sightHidden: true, matrixExterior: true, matrixNative: true, visible: false });
-    const front = createNode({ geometry: stand.front, position: { x: 0, y: -e.y, z: -EXIT_Z } });
+    const front = createNode({ geometry: stand.front, position: { x: 0, y: -e.y, z: -EXIT_Z }, visible: !roof });
     // A line has one tank of each colour, dim or lit.
     const lines = LAYOUT.bays.length, chamber = batch(geo.chamber, 1), fire = batch(geo.fire, 1), hall = batch(geo.hall, 1);
     const blueLit = batch(geo.blueLit, lines), blueDim = batch(geo.blueDim, lines), orangeLit = batch(geo.orangeLit, lines), orangeDim = batch(geo.orangeDim, lines);
@@ -223,10 +242,20 @@
       }
       mat4.transformPoint(EYE, TO_MOUTH, x, y, z);
       const ex = EYE[0], ey = EYE[1], ez = EYE[2];
-      const shown = mix <= 0.99 && ez - SHIELD_Z > NEAR && Math.hypot(ex, ey - MIDDLE, ez - SHIELD_Z) < FAR && opts.cutawayFade < 1 && opts.cutawayMaxY >= 1e5;
+      const shown = (roof ? P.y > roof.y + 0.4 + NEAR && Math.hypot(P.x - roof.x, P.y - roof.y, P.z - roof.z) < FAR
+        : mix <= 0.99 && ez - SHIELD_Z > NEAR && Math.hypot(ex, ey - MIDDLE, ez - SHIELD_Z) < FAR)
+        && (roof ? opts.cutawayMaxY >= roof.y - DEPTH : opts.cutawayFade < 1 && opts.cutawayMaxY >= 1e5);
       root.visible = shown;
       if (!shown) return;
-      mat4.multiply(TMP, relief(RELIEF, ex, ey, ez), HALL);
+      if (roof && mix > 0.99) {
+        const T = camera.target, k = DEPTH / (FM.HALL.h + 5);
+        mat4.transformPoint(TARGET, TO_MOUTH, T.x, T.y, T.z);
+        const dz = ez - TARGET[2], dx = (ex - TARGET[0]) / (Math.abs(dz) > 1e-6 ? dz : 1e-6), dy = (ey - TARGET[1]) / (Math.abs(dz) > 1e-6 ? dz : 1e-6);
+        RELIEF.fill(0); RELIEF[0] = RELIEF[5] = RELIEF[15] = 1;
+        RELIEF[8] = (k - 1) * dx; RELIEF[9] = (k - 1) * dy; RELIEF[10] = k;
+        RELIEF[12] = (1 - k) * AXIS * dx; RELIEF[13] = (1 - k) * AXIS * dy; RELIEF[14] = (1 - k) * AXIS;
+      } else relief(RELIEF, ex, ey, ez);
+      mat4.multiply(TMP, RELIEF, HALL);
       mat4.multiply(W, MOUTH, TMP);
       const running = node.feed.reading.node === "ready" || node.feed.reading.node === "starting";
       hall.instanceData.set(W, 0);

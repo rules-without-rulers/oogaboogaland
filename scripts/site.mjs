@@ -4,16 +4,18 @@
 // title, description, canonical address and preview card, and the router opens the rally from the path.
 // Each is the whole built page with its own head. 404.html sends a miscased or slash-ended route
 // (/OogaRally/) to its address and anything else home; sitemap.xml and robots.txt list the routes, and
-// cards/ holds the card images from `npm run cards`; a route without an `image` uses home's.
+// cards/ holds the card images from `npm run cards`; a route without an `image` uses home's. Modules tagged
+// `data-defer` move out of the pages into js/<group>-<hash>.js (scripts/distribution-modules.mjs), fetched when needed.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { externalizeAudio } from "./distribution-audio.mjs";
+import { externalizeModules } from "./distribution-modules.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(root, process.argv[2] || "untracked/site");
-await import("./build.mjs");
+const { deferred, block } = await import("./build.mjs");
 
 const context = { window: {} };
 vm.runInNewContext(readFileSync(join(root, "src", "js", "routes.js"), "utf8"), context);
@@ -25,6 +27,7 @@ mkdirSync(join(out, "cards"), { recursive: true });
 
 let shell = readFileSync(join(root, "oogaboogaland.html"), "utf8");
 if (process.argv.includes("--audio-assets")) shell = externalizeAudio(shell, root, out);
+shell = externalizeModules(shell, out, deferred, block);
 if (shell.split("</title>").length !== 2 || shell.split("</head>").length !== 2) throw new Error("oogaboogaland.html: expected one <title> and one </head>");
 
 const esc = (text) => text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");

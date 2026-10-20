@@ -176,7 +176,7 @@
     };
     const local = (e) => {
       const r = canvas.getBoundingClientRect();
-      return { x: e.clientX - r.left, y: e.clientY - r.top };
+      return { x: e.clientX - r.left, y: e.clientY - r.top, pointerType: e.pointerType };
     };
     const clearLongPress = () => {
       if (longPressTimer) {
@@ -192,9 +192,14 @@
       return true;
     };
     const onPointerDown = (e) => {
+      const tracked = pointers.get(e.pointerId);
+      if (tracked && tracked.pointerType !== e.pointerType) return;
       const p = local(e);
       pointers.set(e.pointerId, p);
-      if (document.pointerLockElement !== canvas) canvas.setPointerCapture(e.pointerId);
+      if (document.pointerLockElement !== canvas) {
+        // A cancelled or synthetic pointer may no longer exist in the browser.
+        try { canvas.setPointerCapture(e.pointerId); } catch (err) { if (err.name !== "NotFoundError") throw err; }
+      }
       if (pointers.size === 2) {
         clearLongPress();
         if (gesture && gesture.mode === "grab") {
@@ -221,6 +226,8 @@
       }
     };
     const onPointerMove = (e) => {
+      const tracked = pointers.get(e.pointerId);
+      if (tracked && tracked.pointerType !== e.pointerType) return;
       const p = local(e);
       if (e.pointerType === "mouse") {
         hoverX = p.x;
@@ -267,6 +274,10 @@
       }
     };
     const endGesture = (e, cancelled) => {
+      const tracked = pointers.get(e.pointerId);
+      // The virtual mouse can share an id with a real touch. Its handoff
+      // cancellation must not release a finger or interrupt that pinch.
+      if (tracked && tracked.pointerType !== e.pointerType) return;
       const p = local(e);
       pointers.delete(e.pointerId);
       clearLongPress();
@@ -351,13 +362,15 @@
         call("onHoverMove", hit, hoverPoint);
       }
     };
-    const reset = () => {
+    const reset = (preserveZoom = false) => {
       clearLongPress();
       if (gesture && gesture.mode === "grab") call("onGrabEnd", gesture.hit, gesture.last, null, true);
-      gesture = null;
-      for (const pointerId of pointers.keys()) if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
-      pointers.clear();
-      pinchDist = 0;
+      if (preserveZoom !== true || !gesture || gesture.mode !== "pinch") {
+        gesture = null;
+        for (const pointerId of pointers.keys()) if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+        pointers.clear();
+        pinchDist = 0;
+      }
       lastTap.at = -Infinity;
       lastTap.node = lastTap.owner = null;
       hoverX = hoverY = -1;

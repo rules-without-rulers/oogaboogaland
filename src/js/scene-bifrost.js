@@ -139,7 +139,7 @@
   const NO_ACTORS = [];
   // On the Worker's page the island's driving rules hold in here too, and the Ooga driven is reported to the
   // room every frame, so signed-in players in the chamber hear each other (voice needs a driven Ooga).
-  const mayPossess = (cave) => BL.net.mayDrive(cave.traits.name, contributors.stateFor(cave.contributor) === "working");
+  const mayPossess = (cave) => BL.net.mayDrive(cave.traits.name);
   const accountChanged = () => {
     if (!avatar) return;
     const released = BL.net.state.released;
@@ -225,20 +225,26 @@
   // Back out to the island's gate, as the same Ooga.
   const leaveChamber = () => {
     if (leaving) return;
-    world.pilot = avatar ? avatar.traits.name : null;
+    world.pilotDetached = !pilot.player;
+    world.pilot = pilot.player ? pilot.player.traits.name : null;
     leaving = go("hub");
   };
   // Through a window to its world, as the same Ooga, once a transition is free to start.
   const travel = (w) => {
     if (leaving) return;
+    world.pilotDetached = false;
     world.pilot = avatar.traits.name;
     if (!go(w.row.scene, null, !!w.row.instant)) return;
     leaving = true;
     pilot.setActive(false);
   };
   const onKey = (e) => {
+    if (e.key === "0" && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !leaving) return pilot.resetCamera();
+    if ((e.key === "x" || e.key === "X") && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !leaving) {
+      if (pilot.modeAction("mode-toggle")) { e.preventDefault(); return true; }
+    }
     if (e.key === "Escape") {
-      leaveChamber();
+      if (!pilot.escape()) leaveChamber();
       return true;
     }
     return false;
@@ -536,8 +542,8 @@
     hud.onPreset(pilot.goPreset);
     hud.onAction((action) => {
       if (action === "leave") leaveChamber();
-      else if (action === "reset-view") pilot.goPreset("entrance");
-      else if (action === "mode-retake") pilot.modeAction(action);
+      else if (action === "reset-view") pilot.resetCamera();
+      else if (!leaving && action.startsWith("mode-")) pilot.modeAction(action);
     });
     fx = fxMod.create({ root, input, hooks, hud, game, world, renderer, camera, overlay: ctx.overlay, tickerAt: { x: 0, y: 7, z: 0 } });
     dust = BL.dressing.motes({ count: 160, span: 14, low: 0.5, high: 9 });
@@ -546,8 +552,10 @@
     // The visitor's Ooga: `character=` on a page that opens here, else the one handed over, else a free view.
     const asked = ctx.from === null ? new URLSearchParams(location.search).get("character")?.trim().toLowerCase() : null;
     const named = asked ? contributors.roster.find((c) => c.name.toLowerCase() === asked) : null;
-    const picked = named || world.pilot && contributors.roster.find((c) => c.name === world.pilot) || null;
-    const playerName = picked && !BL.net.mayDrive(picked.name, contributors.stateFor(picked) === "working") ? picked.name : null;
+    const returningOwn = pilot.loginViewRestored && BL.net.ownCharacter();
+    const picked = returningOwn ? contributors.roster.find(c => c.name === returningOwn.handle)
+      : named || world.pilot && contributors.roster.find((c) => c.name === world.pilot) || null;
+    const playerName = picked && !BL.net.mayDrive(picked.name) ? picked.name : null;
     world.pilot = null;
     if (playerName) {
       playerWorld = { level: 0, weapons: new Map(), magazine: { owned: false, count: 0, ammo: 0, carrier: null } };
@@ -563,8 +571,10 @@
       // Back from a world, out of its window: standing in front of it, facing the mechanism. In from the island: through
       // the field at the tunnel's end.
       const from = scene.windows.find((w) => w.kind === "travel" && w.row.scene === ctx.from);
-      if (from) standBefore(from, 2.8);
-      else if (ctx.from === "hub") pilot.navigate(GATE);
+      if (!pilot.loginViewRestored) {
+        if (from) standBefore(from, 2.8);
+        else if (ctx.from === "hub") pilot.navigate(GATE);
+      }
     }
     unsubscribeAccount = BL.net.subscribe(accountChanged);
     // Other signed-in players in the chamber, as the Oogas they drive.
@@ -859,11 +869,11 @@
     dust.update(elapsed, pilot.orbit.target.x, pilot.orbit.target.z);
     // Out through the field: walked into, or flown into with the free view.
     if (!leaving) {
-      if (avatar) {
-        const p = avatar.root.position;
+      if (pilot.player) {
+        const p = pilot.player.root.position;
         if (p.z > ENTRY.field && Math.abs(p.x) < ENTRY.halfW) leaveChamber();
         else windowsFrame(previousX, previousY, previousZ);
-      } else {
+      } else if (!avatar) {
         const a = pilot.controls.read(), p = camera.position;
         if (Math.hypot(a.x, a.y) > 0.05 && p.z > ENTRY.field - 1.2 && Math.abs(p.x) < ENTRY.halfW) leaveChamber();
       }
@@ -887,7 +897,10 @@
   const leave = () => {
     // Left by Back or Forward rather than by a way out of its own, the chamber hands the Ooga on, so the next scene
     // plays the same one; the way out to the island and a window have handed theirs over already.
-    if (avatar && !leaving) world.pilot = avatar.traits.name;
+    if (!leaving) {
+      world.pilotDetached = !pilot.player;
+      world.pilot = pilot.player ? pilot.player.traits.name : null;
+    }
     unsubscribeAccount();
     unsubscribeAccount = null;
     BL.net.setBody(null);

@@ -58,7 +58,13 @@
     };
     window.addEventListener("popstate", onPop);
     const dispose = () => window.removeEventListener("popstate", onPop);
-    return { current, arrive, dispose };
+    // A Back or Forward whose scene could not be prepared stays where it is, and so does the address.
+    const abandon = () => {
+      if (!popped) return;
+      popped = false;
+      history.replaceState({ scene: at.scene, place: at.place }, "", urlOf(at));
+    };
+    return { current, arrive, abandon, dispose };
   };
   BL.router = { create };
 })();

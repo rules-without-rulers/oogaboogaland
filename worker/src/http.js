@@ -2,6 +2,7 @@
 
 import { cookieNames, parseCookies } from "./cookies.js";
 import { getSession } from "./db.js";
+import { contributorFor } from "./contributor-access.js";
 
 const BASE_HEADERS = { "cache-control": "no-store", "x-content-type-options": "nosniff" };
 
@@ -30,6 +31,9 @@ export const safeNext = (value) => {
   if (typeof value !== "string" || value.length > 512) return "/";
   if (!value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) return "/";
   if (/[\u0000-\u001f\u007f\\]/.test(value)) return "/";
+  // A normalized pathname may later be serialized as a relative Location.
+  // Dot segments must not turn a same-site path into a network-path reference.
+  if (new URL(value, "https://same-site.invalid").pathname.startsWith("//")) return "/";
   return value;
 };
 
@@ -41,15 +45,24 @@ export const allowed = async (limiter, key) => !limiter || (await limiter.limit(
 export const sessionToken = (request, env) =>
   parseCookies(request.headers.get("cookie")).get(cookieNames(env.SITE_ORIGIN).session) || null;
 
-/** `{ player, session, token }`, or null on any failure; the reason is never sent to the client. */
-export const getSessionFromRequest = async (request, env) => {
+const findSession = async (request, env, removal) => {
   const token = sessionToken(request, env);
   if (!token) return null;
   try {
     const found = await getSession(env.DB, token);
-    return found ? { ...found, token } : null;
+    if (!found) return null;
+    if (removal) return { ...found, token };
+    const character = await contributorFor(found.player.login);
+    return character ? { ...found, token, character } : null;
   } catch (err) {
     console.error("session lookup failed", err);
     return null;
   }
 };
+
+/** `{ player, session, token, character }` for a current character owner, or null. */
+export const getSessionFromRequest = (request, env) => findSession(request, env, false);
+
+// Losing character eligibility must not prevent clearing one's sessions or deleting one's account.
+// This authenticates ownership only; use exclusively for those removal operations.
+export const getSessionForRemoval = (request, env) => findSession(request, env, true);

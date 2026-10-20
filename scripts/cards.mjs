@@ -15,8 +15,8 @@ mkdirSync(join(root, "cards"), { recursive: true });
 
 // Midday on a fixed day with the clock frozen at noon UTC, no rain, no simulator and no position readout,
 // so every run frames the same scene and no card shows when or in which timezone it was taken. The Mempool
-// cave is its live feed, so its card keeps the feeds on and waits for a real chain snapshot; the Timechain
-// Sphere's walls load their feed under `timechain=1`.
+// cave is its live feed, so its card keeps the feeds on and waits for a real chain snapshot. The Timechain
+// Sphere's card is its closed doors and keypad; its rooms have no cards of their own and show home's.
 process.env.TZ = "UTC";
 const page = `file://${join(root, "oogaboogaland.html")}?debug=1&pos=0&hour=12&time=1200&day=80&rain=0&timechain=1`;
 const LIVE = new Set(["mempool"]);

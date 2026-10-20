@@ -9,7 +9,6 @@ import { handleAuth } from "./auth.js";
 import { purgeExpiredSessions } from "./db.js";
 import { handleDonations } from "./donations.js";
 import { allowed, fromSite, getSessionFromRequest, text } from "./http.js";
-import { contributorFor } from "./contributor-access.js";
 import { DEN_NAME } from "./poker-protocol.js";
 
 export { Room } from "./room.js";
@@ -34,8 +33,12 @@ const handleRoom = async (request, env) => {
   const found = await getSessionFromRequest(request, env);
   if (!found) return text("Sign in first", 401);
   if (!(await allowed(env.ROOM_LIMITER, String(found.player.id)))) return text("Too many reconnects", 429);
-  const headers = asPlayer(request, found.player);
-  if (await contributorFor(found.player.login)) headers.set("x-player-contributor", "1");
+  const headers = new Headers(request.headers);
+  for (const name of [...headers.keys()]) if (name.startsWith("x-player-")) headers.delete(name);
+  headers.set("x-player-id", String(found.player.id));
+  headers.set("x-player-login", found.player.login);
+  headers.set("x-player-display", found.player.display || found.player.login);
+  headers.set("x-player-contributor", "1");
   return env.ROOM.getByName(ROOM_NAME).fetch(new Request(request, { headers }));
 };
 

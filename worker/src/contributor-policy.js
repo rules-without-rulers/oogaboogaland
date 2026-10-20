@@ -60,21 +60,44 @@ export const readContributorSnapshot = async (fetcher = fetch) => {
 };
 
 // One bounded cache per Worker isolate; refresh only on a signed-in request.
-// A failed refresh grants no new identity and does not disrupt ordinary sign-in.
+// Failed refreshes retain verified rows only until their snapshot is 24 hours old.
+// Unknown logins still fail closed; bundled owners never need this lookup.
 export const createContributorLookup = (fetcher = fetch, clock = Date.now) => {
-  let rows = new Map(), until = 0, pending = null;
+  let rows = new Map(), until = 0, expires = 0, pending = null;
   return async (login) => {
     if (typeof login !== "string" || !LOGIN.test(login)) return null;
     if (clock() >= until && !pending) pending = (async () => {
       try {
-        rows = new Map(contributorRows(await readContributorSnapshot(fetcher), clock()).map((row) => [row.handle, row]));
+        const snapshot = await readContributorSnapshot(fetcher);
+        rows = new Map(contributorRows(snapshot, clock()).map((row) => [row.handle, row]));
+        expires = time(snapshot.meta.generated_at) + 86400000;
         until = clock() + 60000;
       } catch {
-        rows.clear();
+        if (clock() >= expires) rows.clear();
         until = clock() + 15000;
       } finally { pending = null; }
     })();
     if (pending) await pending;
-    return rows.get(login.toLowerCase()) || null;
+    return clock() < expires ? rows.get(login.toLowerCase()) || null : null;
+  };
+};
+
+// The generated cast owns its handles, including aliases. A GitHub account with an
+// alias's spelling cannot obtain a temporary character under somebody else's name.
+export const createOwnedCharacterLookup = (cast, lookup = createContributorLookup()) => {
+  const owners = new Map(), handles = new Set();
+  for (const row of cast) {
+    handles.add(row.handle.toLowerCase());
+    owners.set(String(row.github_login || row.handle).toLowerCase(), {
+      handle: row.handle, joined: Math.floor(Date.parse(row.joined_at) / 1000),
+      lastCommit: Math.floor(Date.parse(row.last_commit_at) / 1000),
+    });
+  }
+  return async (login) => {
+    if (typeof login !== "string" || !LOGIN.test(login) || login.includes("--")) return null;
+    const key = login.toLowerCase(), own = owners.get(key);
+    if (own) return own;
+    if (handles.has(key)) return null;
+    return lookup(login);
   };
 };

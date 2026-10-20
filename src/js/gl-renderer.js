@@ -90,7 +90,7 @@ float portalHeight(vec2 p, float time, float surge, float rectangular) {
     // Keep special surfaces in their original draws; the core racer parts use ordinary colored faces.
     for (const node of nodes) {
       const g = node.geometry;
-      if (!g || g.lines.length || g.mirrorSource || g.imageSurface || g.reflector || g.clipPlane || g.clipSlab || g.clipMinY !== undefined || g.clipMaxY !== undefined || g.sway || g.swing || g.glass || g.lakeBody || g.lakeWaves || g.lakeChargeRise || g.lightBeam || g.matrixGlyph || g.portalSurface || g.projective || g.cutawayHide || g.cutawayPreserve || g.matrixRevealBacking || g.matrixLocalGlyphSurface || g.glassOpacity || g.depthOffset) return null;
+      if (!g || g.lines.length || g.mirrorSource || g.imageSurface || g.reflector || g.clipPlane || g.clipSlab || g.clipSlab2 || g.clipMinY !== undefined || g.clipMaxY !== undefined || g.sway || g.swing || g.glass || g.lakeBody || g.lakeWaves || g.lakeChargeRise || g.lightBeam || g.matrixGlyph || g.portalSurface || g.projective || g.cutawayHide || g.cutawayPreserve || g.matrixRevealBacking || g.matrixLocalGlyphSurface || g.glassOpacity || g.depthOffset) return null;
     }
     const rig = { nodes: nodes.slice(), sources: nodes.map(node => node.geometry), matrices: new Float32Array(RIG_JOINTS * 16), params: new Float32Array(RIG_JOINTS * 4), voxels: new Float32Array(RIG_JOINTS * 4), visibility: new Float32Array(RIG_JOINTS * 3) };
     for (const node of nodes) node.meshRigSource = rig;
@@ -390,6 +390,7 @@ uniform float uClipMaxY;
 uniform vec4 uObjectClip;
 // A geometry's clipSlab (n, d) keeps |dot(n, p) + d| <= 1; zeros keep everything.
 uniform vec4 uObjectSlab;
+uniform vec4 uObjectSlab2;
 ${CUTAWAY_GLSL}
 uniform float uMatrixGlyphOpacity;
 uniform float uGlassOpacity;
@@ -769,7 +770,7 @@ float matrixPermanentAt(vec3 point, float caveIndex) {
 // Every cut a fragment takes, also the whole of the depth pre-pass's shader, so both passes keep the same pixels.
 bool clipped() {
   vWorld = uProjective > 0.5 ? vWorldH.xyz / vWorldH.w : vWorldH.xyz;
-  if (vWorld.y < uClipMinY || dot(uObjectClip, vec4(vWorld, 1.0)) > 0.0 || abs(dot(uObjectSlab.xyz, vWorld) + uObjectSlab.w) > 1.0 || cutaway(vWorld, vSmokeOpacity)) return true;
+  if (vWorld.y < uClipMinY || dot(uObjectClip, vec4(vWorld, 1.0)) > 0.0 || abs(dot(uObjectSlab.xyz, vWorld) + uObjectSlab.w) > 1.0 || abs(dot(uObjectSlab2.xyz, vWorld) + uObjectSlab2.w) > 1.0 || cutaway(vWorld, vSmokeOpacity)) return true;
   if (uLakeOcclude.w > 0.0 && uEye.y > uLakeOcclude.y && vWorld.y < uLakeOcclude.y) {
     vec3 towardEye = viewTowardEye(vWorld);
     if (towardEye.y > 0.0) {
@@ -1021,7 +1022,7 @@ void main() {
   const ORDINARY_MESH_FS = derive(MESH_FS, ["flat in vec4 vVoxel;", "uniform vec4 uVoxel;"], [/\bvVoxel\b/g, "uVoxel"]);
   // The camera's depth pre-pass: the mesh shader's cuts and nothing else, the rest compiled away.
   const DEPTH_MESH_FS = ORDINARY_MESH_FS.slice(0, ORDINARY_MESH_FS.indexOf("void main() {")) + "void main() {\n  if (clipped()) discard;\n}";
-  const MESH_UNIFORMS = ["uRigCount", "uRigPass", "uRigMatrices", "uRigParams", "uRigVoxels", "uRigVisibility", "uViewProj", "uLightViewProj", "uEye", "uViewDirection", "uLightDir", "uSky", "uGround", "uSun", "uDirectStrength", "uAmbientFloor", "uDiffuseFloor", "uShadowStrength", "uShadowFloor", "uShadowBias", "uShadow", "uShadowTexel", "uLights", "uLightCount", "uSpotLight", "uFog", "uFogRange", "uMatrixParams", "uMatrixOrigin", "uMatrixGlyph", "uMatrixCave", "uMatrixCaves", "uMatrixCaveBounds", "uMatrixCaveNear", "uMatrixPermanentCave", "uMatrixPermanentPlane", "uMatrixPermanentAperture", "uMatrixLivingGlobal", "uMatrixGlyphTex", "uMatrixSamples", "uClipMinY", "uClipMaxY", "uObjectClip", "uObjectSlab", "uProjective", "uMatrixGlyphOpacity", "uGlassOpacity", "uVoxel", "uWindTime", "uSway", "uSwing", "uGlass", "uLightBeam", "uLakeWaveCount", "uLakeWaves", "uLakeSurface", "uLakeSuction", "uLakeFlowEnabled", "uLakeFlowU", "uLakeFlowV", "uLakeCharge", "uLakeChargeRise", "uLakeChargeCenter", "uLakeOcclude", "uLakeWaveEnd", "uLakeBodyShape", "uLakeBodyBend", "uDSBSurface", "uDSBDepth", "uDSBEnvironment"];
+  const MESH_UNIFORMS = ["uRigCount", "uRigPass", "uRigMatrices", "uRigParams", "uRigVoxels", "uRigVisibility", "uViewProj", "uLightViewProj", "uEye", "uViewDirection", "uLightDir", "uSky", "uGround", "uSun", "uDirectStrength", "uAmbientFloor", "uDiffuseFloor", "uShadowStrength", "uShadowFloor", "uShadowBias", "uShadow", "uShadowTexel", "uLights", "uLightCount", "uSpotLight", "uFog", "uFogRange", "uMatrixParams", "uMatrixOrigin", "uMatrixGlyph", "uMatrixCave", "uMatrixCaves", "uMatrixCaveBounds", "uMatrixCaveNear", "uMatrixPermanentCave", "uMatrixPermanentPlane", "uMatrixPermanentAperture", "uMatrixLivingGlobal", "uMatrixGlyphTex", "uMatrixSamples", "uClipMinY", "uClipMaxY", "uObjectClip", "uObjectSlab", "uObjectSlab2", "uProjective", "uMatrixGlyphOpacity", "uGlassOpacity", "uVoxel", "uWindTime", "uSway", "uSwing", "uGlass", "uLightBeam", "uLakeWaveCount", "uLakeWaves", "uLakeSurface", "uLakeSuction", "uLakeFlowEnabled", "uLakeFlowU", "uLakeFlowV", "uLakeCharge", "uLakeChargeRise", "uLakeChargeCenter", "uLakeOcclude", "uLakeWaveEnd", "uLakeBodyShape", "uLakeBodyBend", "uDSBSurface", "uDSBDepth", "uDSBEnvironment"];
   const ORDINARY_SHADOW_VS = derive(SHADOW_VS, [RIG_GLSL, ""], ["rigMatrix(mat4(aM0, aM1, aM2, aM3))", "mat4(aM0, aM1, aM2, aM3)"],
     ["layout(location=6) in vec4 aM3;\n\n", "layout(location=6) in vec4 aM3;\n"]);
   const LINE_VS = `#version 300 es
@@ -1657,7 +1658,7 @@ void main() {
       gl.attachShader(prog, v);
       gl.attachShader(prog, f);
       gl.linkProgram(prog);
-      return { prog, shaders: [v, f], sourceUniforms: uniforms, uniforms: uniforms.concat(["uCutCount", "uCutRegions", "uCutBounds", "uCutawayOpacity"]), u: {}, cutFrame: -1, cutCount: -1, cutOpacity: NaN, clipMinY: NaN, clipMaxY: NaN, objectClip: null, objectSlab: null, projective: NaN, voxel: null, sway: 0, swing: 0, matrixGlyph: NaN, matrixCave: NaN, lineWidth: NaN, glass: 1, lightBeam: 0, lakeFlowEnabled: 0, lakeChargeRise: 0, matrixNone: false };
+      return { prog, shaders: [v, f], sourceUniforms: uniforms, uniforms: uniforms.concat(["uCutCount", "uCutRegions", "uCutBounds", "uCutawayOpacity"]), u: {}, cutFrame: -1, cutCount: -1, cutOpacity: NaN, clipMinY: NaN, clipMaxY: NaN, objectClip: null, objectSlab: null, objectSlab2: null, projective: NaN, voxel: null, sway: 0, swing: 0, matrixGlyph: NaN, matrixCave: NaN, lineWidth: NaN, glass: 1, lightBeam: 0, lakeFlowEnabled: 0, lakeChargeRise: 0, matrixNone: false };
     };
     const finishProgram = (p) => {
       if (!gl.getProgramParameter(p.prog, gl.LINK_STATUS)) {
@@ -3040,6 +3041,11 @@ void main() {
           if (meshPass && (slab !== program.objectSlab || g.lakeFlow)) {
             gl.uniform4fv(program.u.uObjectSlab, slab);
             program.objectSlab = slab;
+          }
+          const slab2 = g.clipSlab2 || NO_OBJECT_SLAB;
+          if (meshPass && slab2 !== program.objectSlab2) {
+            gl.uniform4fv(program.u.uObjectSlab2, slab2);
+            program.objectSlab2 = slab2;
           }
         }
         if (kind === "line") {

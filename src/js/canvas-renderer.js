@@ -408,7 +408,7 @@
     const outsideView = (node) => {
       const g = node.geometry, w = node.world;
       if (w[3] || w[7] || w[11] || w[15] !== 1) return false;
-      if (matrixActive || matrixPermanentCave && hasMatrixReceiver(node) || g.matrixGlyph || g.matrixLocalGlyphSurface || g.clipPlane || g.clipSlab || g.clipMinY !== undefined || g.clipMaxY !== undefined || cutawayRegionCount || cutawayMaxY < Infinity || g.projective || g.portalSurface || g.lakeBody || g.lakeWaves || g.lakeChargeRise || node.matrixCloud || node.mirror || node.mirrorPortal || node.mirrorShard || node.mirrorRippleOnly || g.reflector) return false;
+      if (matrixActive || matrixPermanentCave && hasMatrixReceiver(node) || g.matrixGlyph || g.matrixLocalGlyphSurface || g.clipPlane || g.clipSlab || g.clipSlab2 || g.clipMinY !== undefined || g.clipMaxY !== undefined || cutawayRegionCount || cutawayMaxY < Infinity || g.projective || g.portalSurface || g.lakeBody || g.lakeWaves || g.lakeChargeRise || node.matrixCloud || node.mirror || node.mirrorPortal || node.mirrorShard || node.mirrorRippleOnly || g.reflector) return false;
       const b = BL.scene.boundsOf(g);
       const margin = g.lines?.length ? 8 : 3;
       let outside = 31;
@@ -690,8 +690,9 @@
               if (surfaceCount < 3) continue;
             }
             // A slab (n, d) keeps |n.p + d| <= 1: two planes, n.p + d - 1 <= 0 and -n.p - d - 1 <= 0.
-            const slab = node.geometry.clipSlab;
-            if (slab) {
+            for (let slabIndex = 0; slabIndex < 2; slabIndex++) {
+              const slab = slabIndex ? node.geometry.clipSlab2 : node.geometry.clipSlab;
+              if (!slab) continue;
               if (!surface) {
                 surface = MIRROR_CLIP_IN;
                 for (let k = 0; k < count; k++) {
@@ -703,8 +704,8 @@
                 surfaceCount = clipPlane(surface, surfaceCount, slab[0] * sign, slab[1] * sign, slab[2] * sign, slab[3] * sign - 1, destination);
                 surface = destination;
               }
-              if (surfaceCount < 3) continue;
             }
+            if (surface && surfaceCount < 3) continue;
             if (selective) beginCutaway(surface, surfaceCount);
             for (let piece = 0; selective ? nextCutaway() : piece < 1; piece++) {
               if (selective) { surface = cutawaySurface; surfaceCount = cutawayCount; }

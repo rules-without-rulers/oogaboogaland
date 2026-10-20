@@ -219,18 +219,7 @@
     return [disc(0.42, 0.62, 0.27), disc(-0.45, 0, 0.27), disc(0.42, -0.62, 0.27), link(-0.45, 0, 0.42, 0.62, 0.07), link(-0.45, 0, 0.42, -0.62, 0.07)];
   })();
   const networkGlyph = (height, depth, color, emissive = 1) => solidGlyph(NET_PIECES, height, depth, color, emissive);
-  // A banana as the cooker's signs draw it: a crescent lying on its back, fat in the middle and thin at its ends, in
-  // convex quads, with its stalk up at the right.
-  const BANANA_PIECES = (() => {
-    const n = 8, R = 1.25, cy = 0.95, pieces = [];
-    const at = (k, inset) => { const a = Math.PI * (1.2 + 0.6 * k / n), r = R - inset; return [Math.cos(a) * r, cy + Math.sin(a) * r]; };
-    const thick = (k) => 0.05 + 0.42 * Math.pow(Math.sin(Math.PI * k / n), 0.7);
-    for (let k = 0; k < n; k++) pieces.push([at(k, 0), at(k + 1, 0), at(k + 1, thick(k + 1)), at(k, thick(k))]);
-    const [ex, ey] = at(n, 0.02);
-    pieces.push([[ex - 0.04, ey], [ex + 0.14, ey + 0.16], [ex + 0.06, ey + 0.22], [ex - 0.1, ey + 0.08]]);
-    return pieces;
-  })();
-  const bananaGlyph = (height, depth, color, emissive = 1) => solidGlyph(BANANA_PIECES, height, depth, color, emissive);
+  const bananaGlyph = (height, depth, emissive = 1) => BL.bananaIcon.geometry(height, depth, emissive);
 
   // A banner of the concept's blue (or `cloth`) with the bolt on both faces, hung from a rod: `h` tall, the rod at
   // the origin, facing +z. Cached by height and cloth and shared, so a builder that places one moves a copy
@@ -490,7 +479,8 @@
       // The pool each fall lands in.
       glow.push(moved(lathe({ profile: [[1.6, 0.05], [0, 0.05]], segments: 10, color: "#4a9bff", emissive: 0.5 }), fx, 0, B + 2.6));
     }
-    return { rock: merge(...rock), ceiling: merge(...ceiling), walls, glow: noShadow(merge(...glow)) };
+    const roof = models.cutCylinder(merge(...ceiling), LAYOUT.cooker.x + COOK.lip[0], LAYOUT.cooker.z + COOK.lip[2], 0.29);
+    return { rock: merge(...rock), ceiling: roof, walls, glow: noShadow(merge(...glow)) };
   });
 
   // The highest thing standing under (x, z) below the height y, for a post to rest on: a walkable floor, a tunnel's
@@ -1822,7 +1812,7 @@
       // [x, y, z, radius, teeth] on the hall side: teeth in step with the radius, the centres their radii and a tooth
       // apart, so they mesh.
       gears: [[-1.2, 0.96, 0.5, 0.34, 13], [-1.2, 0.54, 0.956, 0.18, 7]],
-      stack: [1.55, -0.85], stackTop: 3.7, hatch, lip, dir: [dx / l, dz / l],
+      stack: [1.55, -0.85], stackTop: 3.7, hatch, lip, intakeY: HALL.h - c.y - 1.35, dir: [dx / l, dz / l],
       post: 2.5, postZ: -2.3, postH: 6.2, sign: [0, 5.65, -1.97], board: [-1.3, 2.55, -2.05], lamps: [[-2.5, 5.84, -1.8], [2.5, 5.84, -1.8]],
       operator: [1.95, 0.75]
     };
@@ -1904,11 +1894,15 @@
     const leg = ly - 0.14 + 0.2 * (hy - ly) / run;
     flat.push(bevelBox({ w: 0.12, h: leg, d: 0.12, color: IRON_BK, bevel: 0.02, offset: { x: lx - vx / run * 0.2, y: leg / 2, z: lz - vz / run * 0.2 } }));
     glow.push(moved(ball(0.07, "#ffb347", 0.9, 8), lx + vx / run * 0.2, ly + 0.02, lz + vz / run * 0.2));
+    // A short, hollow intake peeks below the vault, directly over the chute's upward launch.
+    const intake = COOK.intakeY, rise = HALL.h - LAYOUT.cooker.y - intake + 0.8;
+    round.push(moved(lathe({ profile: [[0.46, 0], [0.4, 0.15], [0.35, 0.4], [0.35, rise], [0.29, rise], [0.29, 0.4], [0.34, 0.15], [0.4, 0], [0.46, 0]], segments: 16, color: IRON_BK }), lx, intake, lz));
+    for (const y of [intake + 0.08, intake + 0.7, intake + rise - 0.2]) round.push(moved(torus(y < intake + 0.3 ? 0.44 : 0.37, 0.035, ORANGE, 0, 16, 6), lx, y, lz));
     // The sign on its posts, a bunch of bananas beside the lettering.
     signPosts(flat, COOK.post, COOK.postZ, COOK.postH);
     const [, sy2, sz2] = COOK.sign, [bx, by, bz] = COOK.board;
     signFrame(round, flat, 0, sy2, sz2, 5.4, 1.4);
-    for (let k = 0; k < 3; k++) glow.push(moved(turnedZ(bananaGlyph(0.5, 0.06, "#ffd23a", 0.85), 0.45 - k * 0.3), -2.2 + k * 0.08, sy2 - 0.04 + k * 0.05, sz2 + 0.12 + k * 0.01));
+    for (let k = 0; k < 3; k++) glow.push(moved(turnedZ(bananaGlyph(0.5, 0.06, 0.85), 0.45 - k * 0.3), -2.2 + k * 0.08, sy2 - 0.04 + k * 0.05, sz2 + 0.12 + k * 0.01));
     // The donations board hangs on chains from the sign's frame.
     for (const dx of [-0.7, 0.7]) round.push(...chain(bx + dx, by + 0.42, bz, bx + dx, sy2 - 0.7, sz2 - 0.06, 0.04, IRON_DK));
     return { body: shaded(round, flat), glow: noShadow(shaded(glow)) };
@@ -1935,7 +1929,7 @@
   // The porthole: domed glass over the banana, dim at rest and lit while it cooks. Facing +z; the scene turns it.
   const cookerPort = cached(() => {
     const build = (lit) => noShadow(shaded([forwardLathe(turn([[0.36, -0.02], [0.36, 0.01], [0.22, 0.05], [0, 0.06]], 24, lit ? "#ff9a2a" : "#2a1a0c", lit ? 0.95 : 0.3))],
-      [moved(bananaGlyph(0.42, 0.03, lit ? "#fff06a" : "#8a6a1e", lit ? 1 : 0.35), 0, 0, 0.06)]));
+      [moved(bananaGlyph(0.42, 0.03, lit ? 1 : 0.35), 0, 0, 0.06)]));
     return { dim: build(false), lit: build(true) };
   });
   // A gear for the cooker's side: an iron disc with an orange hub, cut into `teeth` round its edge, with spokes on its
@@ -2065,7 +2059,7 @@
     }
     // The medallion's dark field and its banana; the grille's dark back and its three lit slats.
     iron.push(box({ w: 0.75, h: 0.75, d: 0.03, color: "#1a1009", offset: { y: 3.875, z: 0.89 } }));
-    glow.push(moved(turnedZ(bananaGlyph(0.52, 0.07, "#ffd84a", 1), 0.25), 0, 3.875, 0.95));
+    glow.push(moved(bananaGlyph(0.52, 0.07), 0, 3.875, 0.95));
     iron.push(box({ w: 1.5, h: 0.375, d: 0.04, color: IRON_BK, offset: { y: 0.4375, z: 0.895 } }));
     for (let k = 0; k < 3; k++) glow.push(bevelBox({ w: 1.3, h: 0.07, d: 0.03, color: k === 1 ? "#ffd24a" : "#ffc21a", emissive: 1, bevel: 0.01, offset: { y: 0.32 + k * 0.1175, z: 0.93 } }));
     // Blue crystal on the platform at both front corners.
@@ -2094,16 +2088,7 @@
   })();
   const BOARD_FONT = '"Avenir Next Condensed", "Roboto Condensed", "Arial Narrow", "Helvetica Neue", sans-serif';
   const BOARD_INK = { slate: "#16110d", gold: "#ffcf3f", goldLt: "#ffe387", white: "#f1e8d8", dim: "#8d8172", rule: "#6e5532" };
-  const boardBanana = (g, x, y, r) => {
-    g.fillStyle = "#ffd23a";
-    g.beginPath();
-    g.arc(x, y - r * 0.55, r, Math.PI * 0.16, Math.PI * 0.84);
-    g.arc(x, y - r * 1.05, r * 1.15, Math.PI * 0.76, Math.PI * 0.24, true);
-    g.closePath();
-    g.fill();
-    g.fillStyle = "#7a5418";
-    g.fillRect(x + r * 0.74, y - r * 0.36, Math.max(3, r * 0.18), Math.max(3, r * 0.24));
-  };
+  const boardBanana = (g, x, y, r) => BL.bananaIcon.paint(g, x - r, y - r * 1.75, r * 2);
   // The rows' icons, each about `r` across round (x, y): a stack of coins, a banana, a calendar, a bolt and a figure.
   const boardIcon = (g, kind, x, y, r) => {
     if (kind === "coins") {
@@ -2134,7 +2119,7 @@
       g.beginPath(); g.ellipse(x, y + r * 0.72, r * 0.78, r * 0.6, 0, Math.PI, 0); g.fill();
     }
   };
-  const BOARD_ROWS = [["coins", "TOTAL DONATED", 200], ["banana", "BANANAS PRODUCED", 285], ["calendar", "TODAY", 400], ["calendar", "THIS WEEK", 482], ["bolt", "CURRENT RATE", 564], ["figure", "LATEST DONATION", 646]], BOARD_RULE = 336;
+  const BOARD_ROWS = [["coins", "TOTAL DONATED", 200], ["banana", "BANANAS DONATED", 285], ["calendar", "TODAY", 400], ["calendar", "THIS WEEK", 482], ["bolt", "CURRENT RATE", 564], ["figure", "LATEST DONATION", 646]], BOARD_RULE = 336;
   const boardFaces = new Map();
   const boardFace = (note) => boardFaces.get(note) || boardFaces.set(note, paintBoardFace(note)).get(note);
   const paintBoardFace = (note) => {
@@ -2860,6 +2845,17 @@
 
   // The hub's end. Beyond the shield, the factory's bolt glows at the end of the tunnel against a dark wall, so the
   // path pulls people in: the smooth bolt, not the voxel one. A plain start, to be dressed further later.
+  const ROOF_TUBE = { x: 0, z: -2, height: 1.6, radius: 0.29 };
+  const outletShaft = (depth) => lathe({ profile: [[0.35, -depth], [0.35, 0], [0.29, 0], [0.29, -depth], [0.35, -depth]], segments: 16, color: IRON_DK });
+  const bananaOutlet = cached(() => {
+    const h = ROOF_TUBE.height;
+    return shaded([
+      lathe({ profile: [[0.4, 0], [0.35, 0.15], [0.35, h - 0.25], [0.46, h - 0.1], [0.46, h], [0.4, h], [0.29, h - 0.25], [0.29, 0], [0.4, 0]], segments: 16, color: IRON_DK }),
+      moved(torus(0.37, 0.04, ORANGE, 0, 16, 6), 0, 0.45, 0),
+      moved(torus(0.37, 0.04, ORANGE, 0, 16, 6), 0, h - 0.45, 0),
+      moved(torus(0.46, 0.035, BRASS, 0, 16, 6), 0, h - 0.04, 0)
+    ]);
+  });
   const hubTunnel = cached(() => {
     const { geos, glow } = tunnelFrame(1);
     geos.push(box({ w: 4.6, h: 3.6, d: 0.2, color: "#1f140e", offset: { y: 1.8, z: SHIELD_Z - 2.9 } }));
@@ -3099,7 +3095,7 @@
     parts.push(sheet(12, 13, (u, v) => [-W + 2 * W * u, 0, B + (CUT - B) * v], [0, 1, 0], tone(0)));
     parts.push(sheet(12, 7, (u, v) => [(2 * u - 1) * (W - lean(H * v)), H * v, B + lean(H * v)], [0, 0, 1], tone(1)));
     for (const s of [-1, 1]) parts.push(sheet(13, 7, (u, v) => [s * (W - lean(H * v)), H * v, B + lean(H * v) + (CUT - B - lean(H * v)) * u], [-s, 0, 0], tone(s + 3)));
-    parts.push(sheet(8, 10, (u, v) => [(2 * u - 1) * (W - lean(H)), H, B + lean(H) + (CUT - B - lean(H)) * v], [0, -1, 0], tone(5)));
+    parts.push(models.cutCylinder(sheet(8, 10, (u, v) => [(2 * u - 1) * (W - lean(H)), H, B + lean(H) + (CUT - B - lean(H)) * v], [0, -1, 0], tone(5)), L.cooker.x + COOK.lip[0], L.cooker.z + COOK.lip[2], ROOF_TUBE.radius));
     // The falls of glowing water down the back wall, the pools they land in, and the crystal at the walls' feet, on
     // the ledges by the tunnels and by the outcrops framing the pit, which stand here as stacked stone.
     for (const fx of FALLS) {
@@ -3486,7 +3482,7 @@
     forgeSign, forgeWave, forgeLines, forgeTrack, forgeShafts, mintCoin, COILS, teslaCoil, banner, statusLantern, peerPipes, peerMirrors, TUNNEL_SIGN, TUNNEL_POST, EXIT_Z, CONDUIT_SAMPLES, TUNNEL_THEMES, STEP, supportAt, stairCeilingAt, clearAt, walkable, resolveFall,
     hall, scaffold, coreBody, coreChamber, conduits, sat, satFailed, stationFrame, capacitor, forge, forgeFire, cart,
     switchboard, switchScreens, REB, TRE, rebalancerBase, rebalancerRing, rebalancerFlow, treasuryBody, goldPile, hopperFill, beltNugget, goldCrate, dataBoard, moveBoard,
-    COOK, KIOSK, donationCorner, cookerBody, cookerFixtures, cookerLid, cookerPort, cookerGear, cookerSats, donationKiosk, kioskScreen, kioskIdle, kioskThanks, BOARD, donationBoard, boardFace, boardValues, paintBoard, satCube, flyingBanana, coreRingLime,
+    COOK, ROOF_TUBE, bananaOutlet, outletShaft, KIOSK, donationCorner, cookerBody, cookerFixtures, cookerLid, cookerPort, cookerGear, cookerSats, donationKiosk, kioskScreen, kioskIdle, kioskThanks, BOARD, donationBoard, boardFace, boardValues, paintBoard, satCube, flyingBanana, coreRingLime,
     coreRing, teslaArcs, lookoutTower, lookoutLamp, lookoutOptics, lookoutBeam, LOOKOUT_BEAM, STUDY, studyHall, studyNote, studyBoard, tunnels, galleryStation, galleryCaps, label, lanterns, hardHat, hubTunnel, hubWindow, bakeWindow, windowLights, exitTunnel, outsideView,
     beam, moved, turnedY, smoothBolt, smoothBitcoin
   };

@@ -3,9 +3,9 @@
 // session; nothing a client sends can change its identity. Ported from the OBL-Audio prototype:
 // hibernatable sockets with attachments, a snapshot at most 15 times a second while anything moves, an
 // alarm sweeping silent sockets once a minute, and one socket per player, where a newer one kicks the older with `replaced`.
-// Every claim on an Ooga passes `claimRefusal` against the cast the build writes (characters.gen.json).
+// Every claim on an Ooga or gorilla passes `claimRefusal` against the cast the build writes (characters.gen.json).
 // Voice: the room alone talks to the Realtime SFU (the secret stays here), decides who hears whom
-// (`voicePeers`: both driving an Ooga in the same place) and re-checks it on every pull, so a page never
+// (`voicePeers`: both driving a body in the same place) and re-checks it on every pull, so a page never
 // learns another player's session and cannot pull a voice it may not hear.
 // NPCs: the room elects one page as host (`electHost`), relays its binary pose frames to every other
 // page showing the island, and keeps the latest frame for pages that arrive or come back.
@@ -21,7 +21,9 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   CLOSE_KICK, CLOSE_PROTOCOL, MAX_PLAYERS, MOVE_HZ, STALE_MS, SWEEP_MS, TICK_HZ,
-  NPC_FRAME_MAX, NPC_HZ, OUTSIDE, HP_HZ, VOICE_TRACK, CHAT_HZ, CHAT_BURST, CHAT_BUCKET_KEEP, CHAT_RETRY_KEEP, chatLog, castIndex, electHost, npcFollowers, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken, voicePeers,
+  NPC_FRAME_MAX, NPC_HZ, OUTSIDE, HP_HZ, VOICE_TRACK, CHAT_HZ, CHAT_BURST, CHAT_BUCKET_KEEP, CHAT_RETRY_KEEP,
+  DOOR_ZONE, DOOR_ROOM, DOOR_GRANT_MS, DOOR_TRANSIT_MS, DOOR_PASS_MS, DOOR_HZ, DOOR_BURST,
+  chatLog, castIndex, bodyName, ownedBody, electHost, npcFollowers, claimRefusal, parseClientMessage, playerFromHeaders, spawnPoint, takeToken, voicePeers,
 } from "./protocol.js";
 import { sha256Hex } from "./crypto.js";
 import { getPlayer } from "./db.js";
@@ -45,25 +47,37 @@ export class Room extends DurableObject {
     this.chatId = 0;
     this.chatAccepted = new Map();
     this.chatBuckets = new Map();
+    this.doorQueue = [];
+    this.doorActive = null;
+    this.doorPasses = new Map();
+    this.doorId = 0;
+    this.sweepAt = 0;
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     // The pile's sound loop started once, for good: every page plays it at (now - loopEpoch), so all
     // hear the same crackle at the same moment. Stored, so a woken or redeployed room keeps the phase.
     this.loopEpoch = 0;
     ctx.blockConcurrencyWhile(async () => {
-      this.loopEpoch = (await ctx.storage.get("loopEpoch")) || Date.now();
+      const stored = await ctx.storage.get(["loopEpoch", "sweepAt"]);
+      this.loopEpoch = stored && stored.loopEpoch || Date.now();
+      this.sweepAt = stored && stored.sweepAt || Date.now() + SWEEP_MS;
       await ctx.storage.put("loopEpoch", this.loopEpoch);
+      await ctx.storage.put("sweepAt", this.sweepAt);
     });
     // A woken room rebuilds its roster from the attachments its sockets carry.
     for (const ws of ctx.getWebSockets()) {
       const a = ws.deserializeAttachment();
       if (a) this.players.set(a.id, this.record(ws, a));
     }
+    // Old guest sockets can survive a deployment in hibernated attachments.
+    // Use the ordinary departure path so peers drop their presence and voice.
+    for (const p of this.players.values()) if (!ownedBody(CAST, p.login, p.contributor)) this.evict(p, "revoked");
+    this.restoreDoor();
     this.hostId = electHost(this.players.values());
     this.followers = npcFollowers(this.players.values(), this.hostId);
   }
 
   record(ws, a) {
-    return { ws, voice: { pub: null, sub: null, track: null, gen: 0 }, muted: false, hp: 100, ko: false, sent: null, zone: OUTSIDE, pokerVoice: null, inHub: false, joinedAt: Date.now(), ...a, bucket: { tokens: MOVE_HZ, at: Date.now() }, npcBucket: { tokens: NPC_HZ, at: Date.now() }, hpBucket: { tokens: HP_HZ, at: Date.now() }, chatBucket: this.chatBucketFor(a.id, Date.now()), seenAt: Date.now() };
+    return { ws, voice: { pub: null, sub: null, track: null, gen: 0 }, muted: false, hp: 100, ko: false, g: null, sent: null, zone: OUTSIDE, pokerVoice: null, inHub: false, joinedAt: Date.now(), door: null, passes: [], ...a, bucket: { tokens: MOVE_HZ, at: Date.now() }, npcBucket: { tokens: NPC_HZ, at: Date.now() }, hpBucket: { tokens: HP_HZ, at: Date.now() }, doorBucket: { tokens: DOOR_BURST, at: Date.now() }, chatBucket: this.chatBucketFor(a.id, Date.now()), seenAt: Date.now() };
   }
 
   // Retain account debt across socket records, only while awake. Reclaim fully replenished
@@ -81,11 +95,11 @@ export class Room extends DurableObject {
   }
 
   attachment(p) {
-    return { id: p.id, login: p.login, display: p.display, contributor: p.contributor, body: p.body, x: p.x, y: p.y, z: p.z, yaw: p.yaw, voice: p.voice, muted: p.muted, hp: p.hp, ko: p.ko, sent: p.sent, zone: p.zone, pokerVoice: p.pokerVoice, inHub: p.inHub, joinedAt: p.joinedAt };
+    return { id: p.id, login: p.login, display: p.display, contributor: p.contributor, body: p.body, x: p.x, y: p.y, z: p.z, yaw: p.yaw, g: p.g, voice: p.voice, muted: p.muted, hp: p.hp, ko: p.ko, sent: p.sent, zone: p.zone, pokerVoice: p.pokerVoice, inHub: p.inHub, joinedAt: p.joinedAt, door: p.door, passes: p.passes };
   }
 
   view(p) {
-    return { id: p.id, login: p.login, display: p.display, body: p.body, zone: p.zone, x: p.x, y: p.y, z: p.z, yaw: p.yaw, voice: !!p.voice.track, muted: p.muted, hp: p.hp, ko: p.ko };
+    return { id: p.id, login: p.login, display: p.display, body: p.body, zone: p.zone, x: p.x, y: p.y, z: p.z, yaw: p.yaw, g: p.g, voice: !!p.voice.track, muted: p.muted, hp: p.hp, ko: p.ko };
   }
 
   send(ws, msg) {
@@ -101,12 +115,149 @@ export class Room extends DurableObject {
     for (const p of this.players.values()) if (p.ws !== except) this.send(p.ws, text);
   }
 
+  broadcastZone(zone, msg) {
+    const text = JSON.stringify(msg);
+    for (const p of this.players.values()) if (p.zone === zone) this.send(p.ws, text);
+  }
+
+  restoreDoor() {
+    const now = Date.now(), queued = [], active = [];
+    for (const p of this.players.values()) {
+      if (p.door && p.body && p.zone === DOOR_ZONE && p.door.exp > now) {
+        if (p.door.phase === "queued") queued.push(p);
+        else if (p.door.phase === "grant" || p.door.phase === "active") active.push(p);
+        else p.door = null;
+      } else p.door = null;
+      p.passes = Array.isArray(p.passes) ? p.passes.filter((x) => x && DOOR_ROOM.test(x.door) && x.exp > now && p.body && p.zone === x.door) : [];
+      for (const pass of p.passes) this.doorPasses.set(pass.cycle, { ...pass, id: p.id });
+    }
+    queued.sort((a, b) => a.door.at - b.door.at || a.id - b.id);
+    active.sort((a, b) => a.door.at - b.door.at || a.id - b.id);
+    this.doorQueue = queued.map((p) => p.id);
+    if (active.length) {
+      const p = active.shift();
+      this.doorActive = { ...p.door, id: p.id };
+      for (const extra of active) {
+        extra.door = { phase: "queued", dir: extra.door.dir, room: extra.door.room, at: extra.door.at, exp: Number.MAX_SAFE_INTEGER };
+        this.doorQueue.push(extra.id);
+      }
+    }
+    for (const p of this.players.values()) {
+      p.ws.serializeAttachment(this.attachment(p));
+      this.replayDoor(p);
+    }
+  }
+
+  doorCycle(p) {
+    this.doorId = (this.doorId + 1) % 0x100000;
+    return `${Date.now().toString(36)}_${p.id.toString(36)}_${this.doorId.toString(36)}`;
+  }
+
+  replayDoor(p) {
+    const now = Date.now();
+    if (p.zone === DOOR_ZONE && this.doorActive && this.doorActive.phase === "active" && this.doorActive.exp > now && this.doorActive.id !== p.id) {
+      const a = this.doorActive;
+      this.send(p.ws, { t: "transit", cycle: a.cycle, actor: a.id, door: DOOR_ZONE, dir: a.dir, at: a.startedAt, exp: a.exp });
+    }
+    if (DOOR_ROOM.test(p.zone)) for (const pass of this.doorPasses.values()) {
+      if (pass.door === p.zone && pass.exp > now && pass.id !== p.id) this.send(p.ws, { t: "transit", cycle: pass.cycle, actor: pass.id, door: pass.door, dir: pass.dir, at: pass.at, exp: pass.exp });
+    }
+  }
+
+  async doorMessage(p, msg) {
+    const now = Date.now();
+    if (!takeToken(p.doorBucket, DOOR_HZ, now, DOOR_BURST)) {
+      this.send(p.ws, { t: "door", op: "denied", reason: "rate" });
+      return;
+    }
+    if (msg.op === "ask") {
+      if (!p.body || p.zone !== DOOR_ZONE) { this.send(p.ws, { t: "door", op: "denied", reason: "not-at-door" }); return; }
+      if (p.door) { this.send(p.ws, { t: "door", op: "denied", reason: "already-waiting" }); return; }
+      if (this.doorQueue.length >= MAX_PLAYERS) { this.send(p.ws, { t: "door", op: "denied", reason: "full" }); return; }
+      p.door = { phase: "queued", dir: msg.dir, room: msg.room, at: now, exp: Number.MAX_SAFE_INTEGER };
+      this.doorQueue.push(p.id);
+      p.ws.serializeAttachment(this.attachment(p));
+      if (!this.doorActive) this.grantDoor(now);
+      else this.send(p.ws, { t: "door", op: "wait", ahead: Math.max(0, this.doorQueue.indexOf(p.id)) });
+    } else if (msg.op === "go") {
+      const a = this.doorActive;
+      if (!a || a.id !== p.id || a.cycle !== msg.cycle || a.phase !== "grant" || a.exp <= now || !p.body || p.zone !== DOOR_ZONE) {
+        this.send(p.ws, { t: "door", op: "denied", reason: "stale-grant" });
+        return;
+      }
+      a.phase = p.door.phase = "active";
+      a.startedAt = p.door.startedAt = now;
+      a.exp = p.door.exp = now + DOOR_TRANSIT_MS;
+      p.ws.serializeAttachment(this.attachment(p));
+      this.send(p.ws, { t: "door", op: "started", cycle: a.cycle, exp: a.exp });
+      this.broadcastZone(DOOR_ZONE, { t: "transit", cycle: a.cycle, actor: p.id, door: DOOR_ZONE, dir: a.dir, at: now, exp: a.exp });
+    } else if (msg.op === "done") {
+      if (this.doorActive && this.doorActive.id === p.id && this.doorActive.cycle === msg.cycle) this.finishDoor(now);
+    } else if (msg.op === "cancel") {
+      this.cancelDoor(p, now);
+    } else if (msg.op === "pass") {
+      if (!p.body || p.zone !== msg.door) { this.send(p.ws, { t: "door", op: "denied", reason: "wrong-room" }); return; }
+      for (const pass of p.passes) this.doorPasses.delete(pass.cycle);
+      const pass = { cycle: this.doorCycle(p), door: msg.door, dir: msg.dir, at: now, exp: now + DOOR_PASS_MS };
+      p.passes = [pass];
+      this.doorPasses.set(pass.cycle, { ...pass, id: p.id });
+      p.ws.serializeAttachment(this.attachment(p));
+      this.broadcastZone(msg.door, { t: "transit", cycle: pass.cycle, actor: p.id, door: pass.door, dir: pass.dir, at: pass.at, exp: pass.exp });
+    }
+    await this.scheduleAlarm();
+  }
+
+  grantDoor(now = Date.now()) {
+    while (!this.doorActive && this.doorQueue.length) {
+      const p = this.players.get(this.doorQueue.shift());
+      if (!p || !p.body || p.zone !== DOOR_ZONE || !p.door || p.door.phase !== "queued") continue;
+      const cycle = this.doorCycle(p), exp = now + DOOR_GRANT_MS;
+      p.door = { ...p.door, phase: "grant", cycle, exp };
+      this.doorActive = { ...p.door, id: p.id };
+      p.ws.serializeAttachment(this.attachment(p));
+      this.send(p.ws, { t: "door", op: "grant", cycle, exp });
+    }
+    for (let i = 0; i < this.doorQueue.length; i++) {
+      const p = this.players.get(this.doorQueue[i]);
+      if (p) this.send(p.ws, { t: "door", op: "wait", ahead: i });
+    }
+  }
+
+  finishDoor(now = Date.now()) {
+    const a = this.doorActive;
+    if (!a) return;
+    if (a.phase === "active") this.broadcastZone(DOOR_ZONE, { t: "transit-end", cycle: a.cycle });
+    const p = this.players.get(a.id);
+    if (p) { p.door = null; p.ws.serializeAttachment(this.attachment(p)); }
+    this.doorActive = null;
+    this.grantDoor(now);
+  }
+
+  cancelDoor(p, now = Date.now()) {
+    if (!p.door) return;
+    if (this.doorActive && this.doorActive.id === p.id) this.finishDoor(now);
+    else {
+      this.doorQueue = this.doorQueue.filter((id) => id !== p.id);
+      p.door = null;
+      p.ws.serializeAttachment(this.attachment(p));
+      this.grantDoor(now);
+    }
+  }
+
+  clearPasses(p) {
+    for (const pass of p.passes || []) {
+      this.doorPasses.delete(pass.cycle);
+      this.broadcastZone(pass.door, { t: "transit-end", cycle: pass.cycle });
+    }
+    p.passes = [];
+  }
+
   async fetch(request) {
     const path = new URL(request.url).pathname;
     if (path.startsWith("/voice/")) return this.voiceRequest(path.slice("/voice/".length), request);
     if (request.headers.get("upgrade") !== "websocket") return new Response("Expected WebSocket", { status: 426 });
     const who = playerFromHeaders(request.headers);
-    if (!who) return new Response("Forbidden", { status: 403 });
+    if (!who || !ownedBody(CAST, who.login, who.contributor)) return new Response("Contributors with an Ooga only", { status: 403 });
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
@@ -123,14 +274,14 @@ export class Room extends DurableObject {
     const spawn = spawnPoint(this.spawnSlot++);
     const p = this.record(server, { ...who, body: null, x: spawn.x, y: 0, z: spawn.z, yaw: spawn.yaw });
     server.serializeAttachment(this.attachment(p));
-    // An owner arriving takes their Ooga back from whoever holds it.
-    const own = CAST.handleOf.get(p.login.toLowerCase());
-    if (own) for (const o of this.players.values()) if (o.body && o.body.toLowerCase() === own) this.release(o, "owner-here");
+    // An owner arriving takes either body back from whoever holds it.
+    const own = ownedBody(CAST, p.login, p.contributor);
+    if (own) for (const o of this.players.values()) if (o.body && bodyName(o.body).toLowerCase() === own) this.release(o, "owner-here");
     this.players.set(p.id, p);
 
     const others = [];
     for (const o of this.players.values()) if (o !== p) others.push(this.view(o));
-    this.send(server, { t: "welcome", you: this.view(p), players: others, tickHz: TICK_HZ, now: Date.now(), loopEpoch: this.loopEpoch, host: this.hostId, followers: this.followers });
+    this.send(server, { t: "welcome", you: this.view(p), players: others, tickHz: TICK_HZ, now: Date.now(), loopEpoch: this.loopEpoch, host: this.hostId, followers: this.followers, features: ["door"] });
     // A message of its own after welcome, so a page that does not know chat ignores it; empty after the room slept.
     this.send(server, { t: "chat-history", messages: this.chat.list() });
     this.broadcast({ t: "join", p: this.view(p) }, server);
@@ -148,6 +299,7 @@ export class Room extends DurableObject {
   webSocketMessage(ws, message) {
     const p = this.byWs(ws);
     if (!p) return;
+    if (!ownedBody(CAST, p.login, p.contributor)) { this.evict(p, "revoked"); return; }
     if (typeof message !== "string") {
       this.npcFrame(p, message);
       return;
@@ -163,6 +315,7 @@ export class Room extends DurableObject {
     if (msg.t === "pose") {
       if (!takeToken(p.bucket, MOVE_HZ, p.seenAt)) return;
       p.x = msg.x; p.y = msg.y; p.z = msg.z; p.yaw = msg.yaw;
+      if (msg.g && p.body && p.body.startsWith("gorilla:")) p.g = msg.g;
       this.dirty = true;
       this.scheduleFlush();
     } else if (msg.t === "hub") {
@@ -173,12 +326,15 @@ export class Room extends DurableObject {
       if (p.inHub && p.id !== this.hostId && this.lastNpc) this.send(p.ws, this.lastNpc);
     } else if (msg.t === "zone") {
       if (msg.name === p.zone) return;
+      if (msg.name !== DOOR_ZONE) this.cancelDoor(p);
+      if (msg.name !== p.zone) this.clearPasses(p);
       p.zone = msg.name;
       p.pokerVoice = null;
       this.broadcast({ t: "zone", id: p.id, name: p.zone });
       // The page let go of every voice when it moved, so it always hears where it is now, changed list or not.
       p.sent = null;
       this.updateVoice();
+      this.replayDoor(p);
     } else if (msg.t === "poker-voice") {
       if (p.zone !== "ember-den" || msg.table === p.pokerVoice) return;
       p.pokerVoice = msg.table;
@@ -197,6 +353,8 @@ export class Room extends DurableObject {
     } else if (msg.t === "chat") {
       // Nothing in the attachment changes.
       return this.say(p, msg.text, msg.clientId);
+    } else if (msg.t === "door") {
+      return this.doorMessage(p, msg);
     } else if (msg.t === "body") {
       if (msg.name === p.body) return;
       const refusal = claimRefusal(CAST, p.login, msg.name, this.players.values(), p.contributor);
@@ -207,9 +365,11 @@ export class Room extends DurableObject {
       } else {
         p.body = msg.name;
       }
-      // Another Ooga, or none: its health is reported afresh.
+      if (!p.body) { this.cancelDoor(p); this.clearPasses(p); }
+      // Another body, or none: its normalized health is reported afresh.
       p.hp = 100;
       p.ko = false;
+      p.g = null;
       this.broadcast({ t: "body", id: p.id, name: p.body });
       this.updateVoice();
     }
@@ -229,6 +389,8 @@ export class Room extends DurableObject {
 
   drop(p, reason) {
     if (this.players.get(p.id) !== p) return;
+    this.cancelDoor(p);
+    this.clearPasses(p);
     this.players.delete(p.id);
     this.broadcast({ t: "leave", id: p.id, reason });
     this.electHost();
@@ -240,8 +402,11 @@ export class Room extends DurableObject {
   }
 
   release(p, reason) {
+    this.cancelDoor(p);
+    this.clearPasses(p);
     this.send(p.ws, { t: "release", name: p.body, reason });
     p.body = null;
+    p.g = null;
     p.ws.serializeAttachment(this.attachment(p));
     this.broadcast({ t: "body", id: p.id, name: null });
     this.updateVoice();
@@ -271,9 +436,12 @@ export class Room extends DurableObject {
   snapshot() {
     if (!this.dirty) return;
     this.dirty = false;
-    const ps = [];
-    for (const p of this.players.values()) ps.push(p.id, p.x, p.y, p.z, p.yaw);
-    this.broadcast({ t: "state", now: Date.now(), ps });
+    const ps = [], gs = [];
+    for (const p of this.players.values()) {
+      ps.push(p.id, p.x, p.y, p.z, p.yaw);
+      if (p.g) gs.push(p.id, ...p.g);
+    }
+    this.broadcast(gs.length ? { t: "state", now: Date.now(), ps, gs } : { t: "state", now: Date.now(), ps });
   }
 
   // A line from a player, named by the session's login and display name; over the rate its sender is told.
@@ -361,6 +529,10 @@ export class Room extends DurableObject {
     if (!this.sfu) return json({ error: "voice is not configured" }, 503);
     const p = this.players.get(Number(request.headers.get("x-player-id")));
     if (!p) return json({ error: "join the island first" }, 409);
+    if (!ownedBody(CAST, p.login, p.contributor)) {
+      this.evict(p, "revoked");
+      return json({ error: "contributors with an Ooga only" }, 403);
+    }
     let body = {};
     try {
       body = await request.json();
@@ -403,18 +575,32 @@ export class Room extends DurableObject {
       }
       if (op === "pull") {
         if (!p.voice.sub || !Array.isArray(body.ids)) return json({ error: "bad pull" }, 400);
+        const sub = p.voice.sub;
         const allowed = new Set(voicePeers([...this.players.values()]).get(p.id) || []);
-        const tracks = [], idOf = new Map();
+        const tracks = [], requested = new Map();
         for (const id of body.ids.slice(0, 64)) {
           const q = this.players.get(id);
-          if (!allowed.has(id) || !q || !q.voice.pub) continue;
+          if (!allowed.has(id) || !q || !q.voice.pub || !q.voice.track) continue;
           tracks.push({ location: "remote", sessionId: q.voice.pub, trackName: q.voice.track });
-          idOf.set(q.voice.pub, id);
+          requested.set(q.voice.pub, { id, track: q.voice.track });
         }
         if (!tracks.length) return json({ tracks: [], requiresImmediateRenegotiation: false });
-        const res = await this.sfu.newTracks(p.voice.sub, { tracks });
+        const res = await this.sfu.newTracks(sub, { tracks });
+        // A zone, body, socket or publication can change while the SFU request is in flight. Close every
+        // track that is no longer eligible before its descriptor reaches the page.
+        const current = this.players.get(p.id) === p && p.voice.sub === sub;
+        const allowedNow = current ? new Set(voicePeers([...this.players.values()]).get(p.id) || []) : new Set();
+        const kept = [], close = [];
+        for (const t of res.tracks || []) {
+          const asked = requested.get(t.sessionId), q = asked && this.players.get(asked.id);
+          if (current && asked && allowedNow.has(asked.id) && q && q.voice.pub === t.sessionId && q.voice.track === asked.track) {
+            kept.push({ id: asked.id, mid: t.mid, errorCode: t.errorCode });
+          } else if (typeof t.mid === "string") close.push(t.mid);
+        }
+        if (close.length) await this.sfu.closeTracks(sub, close);
+        if (!current) return json({ error: "voice membership changed" }, 409);
         return json({
-          tracks: (res.tracks || []).map((t) => ({ id: idOf.get(t.sessionId) ?? null, mid: t.mid, errorCode: t.errorCode })),
+          tracks: kept,
           sessionDescription: res.sessionDescription,
           requiresImmediateRenegotiation: !!res.requiresImmediateRenegotiation,
         });
@@ -445,25 +631,64 @@ export class Room extends DurableObject {
   }
 
   async ensureSweep() {
-    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + SWEEP_MS);
+    if (!this.sweepAt) {
+      this.sweepAt = Date.now() + SWEEP_MS;
+      await this.ctx.storage.put("sweepAt", this.sweepAt);
+    }
+    await this.scheduleAlarm();
+  }
+
+  nextDoorExpiry() {
+    let at = this.doorActive ? this.doorActive.exp : Infinity;
+    for (const pass of this.doorPasses.values()) at = Math.min(at, pass.exp);
+    return at;
+  }
+
+  async scheduleAlarm() {
+    if (!this.players.size) return;
+    const next = Math.min(this.sweepAt || Date.now() + SWEEP_MS, this.nextDoorExpiry());
+    const set = await this.ctx.storage.getAlarm();
+    if (set === null || set > next) await this.ctx.storage.setAlarm(next);
+  }
+
+  expireDoors(now) {
+    if (this.doorActive && this.doorActive.exp <= now) this.finishDoor(now);
+    for (const [cycle, pass] of [...this.doorPasses]) if (pass.exp <= now) {
+      this.doorPasses.delete(cycle);
+      const p = this.players.get(pass.id);
+      if (p) {
+        p.passes = p.passes.filter((x) => x.cycle !== cycle);
+        p.ws.serializeAttachment(this.attachment(p));
+      }
+      this.broadcastZone(pass.door, { t: "transit-end", cycle });
+    }
   }
 
   // Sockets silent past STALE_MS, auto-answered pings included, are evicted as stale.
   async alarm() {
     const now = Date.now();
-    for (const p of [...this.players.values()]) {
-      // The existing operator D1 ban also ends active presence at the next successful sweep.
-      // Retry on a later alarm if D1 is unavailable; never infer a ban from a failed read.
-      if (this.env.DB) {
-        let player;
-        try { player = await getPlayer(this.env.DB, p.id); } catch { /* Retry the account check next sweep; stale eviction still applies. */ }
-        if (this.players.get(p.id) !== p) continue;
-        if (player !== undefined && (!player || player.banned_at)) { this.evict(p, "revoked"); continue; }
+    const sweepDue = !this.sweepAt || now >= this.sweepAt;
+    this.expireDoors(now);
+    // A cancelled lease can leave its earlier alarm in place. Before the recorded sweep deadline that wake only
+    // expires door state and reschedules; it must not turn account reads and stale checks into a high-frequency poll.
+    if (sweepDue) {
+      for (const p of [...this.players.values()]) {
+        if (!ownedBody(CAST, p.login, p.contributor)) { this.evict(p, "revoked"); continue; }
+        // The existing operator D1 ban also ends active presence at the next successful sweep.
+        // Retry on a later alarm if D1 is unavailable; never infer a ban from a failed read.
+        if (this.env.DB) {
+          let player;
+          try { player = await getPlayer(this.env.DB, p.id); } catch { /* Retry the account check next sweep; stale eviction still applies. */ }
+          if (this.players.get(p.id) !== p) continue;
+          if (player !== undefined && (!player || player.banned_at)) { this.evict(p, "revoked"); continue; }
+        }
+        const pinged = this.ctx.getWebSocketAutoResponseTimestamp(p.ws);
+        const last = Math.max(p.seenAt, pinged ? pinged.getTime() : 0);
+        if (now - last > STALE_MS) this.evict(p, "stale");
       }
-      const pinged = this.ctx.getWebSocketAutoResponseTimestamp(p.ws);
-      const last = Math.max(p.seenAt, pinged ? pinged.getTime() : 0);
-      if (now - last > STALE_MS) this.evict(p, "stale");
+      this.sweepAt = now + SWEEP_MS;
+      await this.ctx.storage.put("sweepAt", this.sweepAt);
     }
-    if (this.players.size) await this.ctx.storage.setAlarm(now + SWEEP_MS);
+    if (this.players.size) await this.ctx.storage.setAlarm(Math.min(this.sweepAt, this.nextDoorExpiry()));
   }
 }

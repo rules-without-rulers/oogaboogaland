@@ -1,0 +1,496 @@
+{
+  "status": "Read-only provider and payload research; no feature implementation and no copied third-party application code.",
+  "verified_date_utc": "2026-10-19",
+  "primary_sources": [
+    "https://timechainindex.com/blocks",
+    "https://timechainindex.com/codes/bitcoinstats.js",
+    "https://api.timechainindex.com/",
+    "https://api.timechainindex.com/sections/network.html",
+    "https://mempool.space/docs/api/rest",
+    "https://github.com/mempool/mempool/blob/master/frontend/src/app/docs/api-docs/api-docs-data.ts"
+  ],
+  "reference_chart_evidence": {
+    "source": "https://timechainindex.com/block/742581",
+    "status": "Search-indexed primary-site rendered text, crawled approximately two weeks before research, not live measurements. Shows same explorer analytics panels.",
+    "panels": [
+      "Latest Blocks",
+      "Latest 144 blocks analysis",
+      "Miner Dominance (1w)",
+      "Block Production (expected 6/hr)",
+      "Network Hashrate (1y hash + difficulty)"
+    ]
+  },
+  "reference_provider_limits": {
+    "known": "TimechainIndex public helper codes/bitcoinstats.js explicitly fetches mempool.space/api/blocks/tip/height and mempool.space/api/v1/fees/precise.",
+    "unknown": "The /blocks main chart module was not available to this research fetch (HTTP 403 at /hydrated/Pages/explorer/block.js). Its exact per-chart providers, refresh cadence, category thresholds and formulas were not verified. Do not claim pixel/data parity or claim the equivalent endpoints below are the exact TimechainIndex implementation."
+  },
+  "equivalent_public_live_endpoints": [
+    {
+      "url": "https://mempool.space/api/v1/blocks",
+      "verification": "HTTP GET returned JSON, unauthenticated; Origin: https://oogabooga.land",
+      "headers": [
+        "HTTP/2 200 ",
+        "date: Mon, 19 Oct 2026 19:08:37 GMT",
+        "access-control-allow-origin: *",
+        "expires: Mon, 19 Oct 2026 19:08:36 GMT",
+        "cache-control: no-cache",
+        "cache-control: public"
+      ],
+      "fields": {
+        "height": "integer block height",
+        "id": "block hash",
+        "timestamp": "Unix seconds (miner header timestamp; not strictly monotonic)",
+        "tx_count": "transaction count, including coinbase",
+        "size": "serialized bytes",
+        "weight": "weight units",
+        "difficulty": "dimensionless Bitcoin difficulty",
+        "extras.pool.name": "attributed mining-pool name",
+        "extras.totalFees": "satoshis",
+        "extras.reward": "satoshis, subsidy plus fees",
+        "extras.medianFee": "sat/vB",
+        "extras.feeRange": "sat/vB array",
+        "extras.avgFeeRate": "sat/vB",
+        "extras.virtualSize": "vbytes",
+        "previousblockhash": "64-character hex hash of the parent block; use with height and id to verify ancestry/reconcile reorgs"
+      },
+      "sample": [
+        {
+          "height": 972195,
+          "id": "00000000000000000001389393772fa88ecff4d3337a25a27c14d0f73d03142b",
+          "timestamp": 1792436861,
+          "tx_count": 1267,
+          "size": 1828308,
+          "weight": 3993942,
+          "difficulty": 140577680051919.6,
+          "extras": {
+            "pool": {
+              "id": 102,
+              "name": "SpiderPool",
+              "slug": "spiderpool"
+            },
+            "totalFees": 1192732,
+            "reward": 313692732,
+            "medianFee": 1.0016402405686167,
+            "avgFeeRate": 1,
+            "virtualSize": 998485.5
+          },
+          "previousblockhash": "0000000000000000000112f93da90ca4c75de4a741b55b83b5527e89ba1f8bf5"
+        }
+      ],
+      "sample_note": "Projection of live response; arrays truncated and irrelevant fields omitted. Not a future fixed fixture."
+    },
+    {
+      "url": "https://mempool.space/api/mempool",
+      "verification": "HTTP GET returned JSON, unauthenticated; Origin: https://oogabooga.land",
+      "headers": [
+        "HTTP/2 200 ",
+        "date: Mon, 19 Oct 2026 19:08:37 GMT",
+        "cache-control: max-age=1",
+        "access-control-allow-origin: *",
+        "expires: Mon, 19 Oct 2026 19:08:38 GMT",
+        "cache-control: public"
+      ],
+      "fields": {
+        "count": "pending transaction count",
+        "vsize": "pending virtual bytes",
+        "total_fee": "pending fees in satoshis (REST; do not confuse with BTC-valued WebSocket mempoolInfo.total_fee)",
+        "fee_histogram": "[sat/vB, virtual-byte-count] pairs"
+      },
+      "sample": {
+        "count": 45720,
+        "vsize": 25046986,
+        "total_fee": 3061203,
+        "fee_histogram": [
+          [
+            0.312,
+            65985
+          ],
+          [
+            0.18154803,
+            78335
+          ]
+        ]
+      },
+      "sample_note": "Projection of live response; arrays truncated and irrelevant fields omitted. Not a future fixed fixture."
+    },
+    {
+      "url": "https://mempool.space/api/v1/fees/precise",
+      "verification": "HTTP GET returned JSON, unauthenticated; Origin: https://oogabooga.land",
+      "headers": [
+        "HTTP/2 200 ",
+        "date: Mon, 19 Oct 2026 19:08:37 GMT",
+        "access-control-allow-origin: *",
+        "expires: Mon, 19 Oct 2026 19:08:36 GMT",
+        "cache-control: no-cache",
+        "cache-control: public"
+      ],
+      "fields": {
+        "fastestFee": "sat/vB",
+        "halfHourFee": "sat/vB",
+        "hourFee": "sat/vB",
+        "economyFee": "sat/vB",
+        "minimumFee": "sat/vB"
+      },
+      "sample": {
+        "fastestFee": 1,
+        "halfHourFee": 0.5,
+        "hourFee": 0.136,
+        "economyFee": 0.136,
+        "minimumFee": 0.1
+      },
+      "sample_note": "Projection of live response; arrays truncated and irrelevant fields omitted. Not a future fixed fixture."
+    },
+    {
+      "url": "https://mempool.space/api/v1/difficulty-adjustment",
+      "verification": "HTTP GET returned JSON, unauthenticated; Origin: https://oogabooga.land",
+      "headers": [
+        "HTTP/2 200 ",
+        "date: Mon, 19 Oct 2026 19:08:37 GMT",
+        "access-control-allow-origin: *",
+        "expires: Mon, 19 Oct 2026 19:08:36 GMT",
+        "cache-control: no-cache",
+        "cache-control: public"
+      ],
+      "fields": {
+        "progressPercent": "percent of current difficulty period",
+        "difficultyChange": "estimated percentage change",
+        "estimatedRetargetDate": "Unix milliseconds",
+        "remainingBlocks": "blocks",
+        "remainingTime": "milliseconds",
+        "previousRetarget": "percent",
+        "previousTime": "Unix seconds",
+        "nextRetargetHeight": "height",
+        "timeAvg": "milliseconds",
+        "adjustedTimeAvg": "milliseconds"
+      },
+      "sample": {
+        "progressPercent": 23.958333333333336,
+        "difficultyChange": 2.8768245370467405,
+        "estimatedRetargetDate": 1793332772073,
+        "remainingBlocks": 1533,
+        "remainingTime": 895856073,
+        "previousRetarget": 5.923684832227039,
+        "previousTime": 1792154251,
+        "nextRetargetHeight": 973728,
+        "timeAvg": 585227,
+        "adjustedTimeAvg": 584381,
+        "timeOffset": 0,
+        "expectedBlocks": 471.10833333333335
+      },
+      "sample_note": "Projection of live response; arrays truncated and irrelevant fields omitted. Not a future fixed fixture."
+    },
+    {
+      "url": "https://mempool.space/api/v1/mining/pools/1w",
+      "verification": "HTTP GET returned JSON, unauthenticated; Origin: https://oogabooga.land",
+      "headers": [
+        "HTTP/2 200 ",
+        "date: Mon, 19 Oct 2026 19:09:20 GMT",
+        "access-control-allow-origin: *",
+        "cache-control: max-age=120",
+        "expires: Mon, 19 Oct 2026 19:11:20 GMT",
+        "cache-control: public"
+      ],
+      "fields": {
+        "pools[].name": "attributed pool name",
+        "pools[].blockCount": "blocks mined in requested trailing window",
+        "pools[].emptyBlocks": "empty blocks in window",
+        "blockCount": "all blocks in window",
+        "lastEstimatedHashrate": "H/s",
+        "lastEstimatedHashrate3d": "H/s",
+        "lastEstimatedHashrate1w": "H/s"
+      },
+      "sample": {
+        "pools": [
+          {
+            "poolId": 112,
+            "name": "Foundry USA",
+            "blockCount": 262,
+            "rank": 1,
+            "emptyBlocks": 0,
+            "slug": "foundryusa"
+          },
+          {
+            "poolId": 45,
+            "name": "AntPool",
+            "blockCount": 232,
+            "rank": 2,
+            "emptyBlocks": 0,
+            "slug": "antpool"
+          }
+        ],
+        "blockCount": 1067,
+        "lastEstimatedHashrate": 1.076488345104513e+21,
+        "lastEstimatedHashrate3d": 1.019617377173787e+21,
+        "lastEstimatedHashrate1w": 1.032190615706466e+21
+      },
+      "sample_note": "Projection of live response; arrays truncated and irrelevant fields omitted. Not a future fixed fixture."
+    },
+    {
+      "url": "https://mempool.space/api/v1/mining/pools/24h",
+      "verification": "HTTP GET returned JSON, unauthenticated; Origin: https://oogabooga.land",
+      "headers": [
+        "HTTP/2 200 ",
+        "date: Mon, 19 Oct 2026 19:08:37 GMT",
+        "access-control-allow-origin: *",
+        "cache-control: max-age=120",
+        "expires: Mon, 19 Oct 2026 19:10:37 GMT",
+        "cache-control: public"
+      ],
+      "fields": {
+        "pools[].name": "attributed pool name",
+        "pools[].blockCount": "blocks mined in requested trailing window",
+        "pools[].emptyBlocks": "empty blocks in window",
+        "blockCount": "all blocks in window",
+        "lastEstimatedHashrate": "H/s",
+        "lastEstimatedHashrate3d": "H/s",
+        "lastEstimatedHashrate1w": "H/s"
+      },
+      "sample": {
+        "pools": [
+          {
+            "poolId": 112,
+            "name": "Foundry USA",
+            "blockCount": 41,
+            "rank": 1,
+            "emptyBlocks": 0,
+            "slug": "foundryusa"
+          },
+          {
+            "poolId": 45,
+            "name": "AntPool",
+            "blockCount": 35,
+            "rank": 2,
+            "emptyBlocks": 0,
+            "slug": "antpool"
+          }
+        ],
+        "blockCount": 156,
+        "lastEstimatedHashrate": 1.076488345104513e+21,
+        "lastEstimatedHashrate3d": 1.019617377173787e+21,
+        "lastEstimatedHashrate1w": 1.032190615706466e+21
+      },
+      "sample_note": "Projection of live response; arrays truncated and irrelevant fields omitted. Not a future fixed fixture."
+    },
+    {
+      "url": "https://mempool.space/api/v1/mining/reward-stats/144",
+      "verification": "HTTP GET returned JSON, unauthenticated; Origin: https://oogabooga.land",
+      "headers": [
+        "HTTP/2 200 ",
+        "date: Mon, 19 Oct 2026 19:08:37 GMT",
+        "access-control-allow-origin: *",
+        "expires: Mon, 19 Oct 2026 19:10:37 GMT",
+        "cache-control: max-age=120",
+        "cache-control: public"
+      ],
+      "fields": {
+        "startBlock": "inclusive first height",
+        "endBlock": "inclusive last height",
+        "totalReward": "satoshis, numeric string",
+        "totalFee": "satoshis, numeric string",
+        "totalTx": "count, numeric string"
+      },
+      "sample": {
+        "startBlock": 972052,
+        "endBlock": 972195,
+        "totalReward": "45228442035",
+        "totalFee": "228442035",
+        "totalTx": "576557"
+      },
+      "sample_note": "Projection of live response; arrays truncated and irrelevant fields omitted. Not a future fixed fixture."
+    },
+    {
+      "url": "https://mempool.space/api/v1/mining/hashrate/1y",
+      "verification": "HTTP GET returned JSON, unauthenticated; Origin: https://oogabooga.land",
+      "headers": [
+        "HTTP/2 200 ",
+        "date: Mon, 19 Oct 2026 19:09:22 GMT",
+        "access-control-allow-origin: *",
+        "cache-control: max-age=120",
+        "expires: Mon, 19 Oct 2026 19:11:22 GMT",
+        "cache-control: public"
+      ],
+      "fields": {
+        "hashrates[].timestamp": "Unix seconds",
+        "hashrates[].avgHashrate": "H/s",
+        "difficulty[].time": "Unix seconds",
+        "difficulty[].height": "block height",
+        "difficulty[].difficulty": "dimensionless difficulty",
+        "difficulty[].adjustment": "multiplicative ratio; percentage = (ratio - 1) * 100",
+        "currentHashrate": "H/s",
+        "currentDifficulty": "dimensionless difficulty"
+      },
+      "sample": {
+        "hashrates": [
+          {
+            "timestamp": 1760918400,
+            "avgHashrate": 1.00796196348442e+21
+          },
+          {
+            "timestamp": 1761004800,
+            "avgHashrate": 1.085536445332513e+21
+          }
+        ],
+        "difficulty": [
+          {
+            "time": 1761732893,
+            "height": 921312,
+            "difficulty": 155973032196071.9,
+            "adjustment": 1.063094973564148
+          },
+          {
+            "time": 1762972230,
+            "height": 923328,
+            "difficulty": 152271405447597.4,
+            "adjustment": 0.9762679934501648
+          }
+        ],
+        "currentHashrate": 1.030821971631334e+21,
+        "currentDifficulty": 140577680051919.6
+      },
+      "sample_note": "Projection of live response; arrays truncated and irrelevant fields omitted. Not a future fixed fixture."
+    },
+    {
+      "url": "https://mempool.space/api/v1/fees/mempool-blocks",
+      "verification": "HTTP GET returned JSON, unauthenticated; Origin: https://oogabooga.land",
+      "headers": [
+        "HTTP/2 200 ",
+        "date: Mon, 19 Oct 2026 19:08:37 GMT",
+        "access-control-allow-origin: *",
+        "expires: Mon, 19 Oct 2026 19:08:36 GMT",
+        "cache-control: no-cache",
+        "cache-control: public"
+      ],
+      "fields": {
+        "blockSize": "bytes",
+        "blockVSize": "vbytes",
+        "nTx": "count",
+        "totalFees": "satoshis",
+        "medianFee": "sat/vB",
+        "feeRange": "sat/vB array"
+      },
+      "sample": [
+        {
+          "blockSize": 1710209,
+          "blockVSize": 997943,
+          "nTx": 4634,
+          "totalFees": 252480,
+          "medianFee": 0.14115222804155578,
+          "feeRange": [
+            0.136,
+            0.13935764833968428,
+            0.13935764833968428,
+            0.13935764833968428,
+            0.14173228346456693,
+            0.1489123121776183,
+            10.367201426024955
+          ]
+        }
+      ],
+      "sample_note": "Projection of live response; arrays truncated and irrelevant fields omitted. Not a future fixed fixture."
+    }
+  ],
+  "chart_mapping": [
+    {
+      "chart": "Latest Blocks",
+      "source": "/api/v1/blocks",
+      "mapping": "Use height, timestamp, tx_count, size, extras.pool.name, extras.totalFees. 15 recent records returned. BTC = sats / 1e8; MB = bytes / 1e6. Do not confuse totalFees and reward."
+    },
+    {
+      "chart": "Mempool, fees, difficulty",
+      "source": [
+        "/api/mempool",
+        "/api/v1/fees/precise",
+        "/api/v1/fees/mempool-blocks",
+        "/api/v1/difficulty-adjustment"
+      ],
+      "mapping": "Backlog count/vbytes, fee tiers with sub-sat precision, projected block fee bands, and retarget progress/estimate. Display observation time and stale status."
+    },
+    {
+      "chart": "Latest 144 blocks analysis",
+      "source": "/api/v1/blocks/:startHeight (documented pagination) plus /api/v1/mining/reward-stats/144",
+      "mapping": "Retrieve a contiguous height/hash-checked set of exactly 144 blocks (plus predecessor if computing all 144 intervals); aggregate tx_count, fees, size, weight, pool counts. Fullness = weight / 4000000; rank highest fees/fullest/biggest/busiest from actual blocks. Reward endpoint supplies only totals, not all individual blocks. Pagination source documented; this research fetched only the initial 15, not all 144.",
+      "uncertainty": "Define and label arithmetic versus weighted fee-rate average; original site formula is unverified. Header timestamps can move backward; do not silently claim a zero-second fastest block. Fee Pressure/Mining Pace category thresholds are not verified."
+    },
+    {
+      "chart": "Miner dominance, 1w",
+      "source": "/api/v1/mining/pools/1w",
+      "mapping": "share = pool.blockCount / response.blockCount * 100. Preserve unknown pool. Same provider window for numerator/denominator.",
+      "uncertainty": "Response has no per-pool reward sum; do not multiply counts by an average and present it as actual rewards. Need separately verified complete block/reward data if reward labels are required."
+    },
+    {
+      "chart": "Block production",
+      "source": "/api/v1/mining/pools/24h and detailed blocks paged to the window boundary",
+      "mapping": "24h block count and top miner available in pools result; last-hour count, fastest/slowest intervals, transactions and fullness require complete detailed window. Expected 24h count = 144; expected hourly = 6; production pace = measured24hCount/144*100.",
+      "uncertainty": "Last 144 blocks is not a 24h window (verified 24h count was 156). Define header-timestamp based windows honestly; firstSeen was null on fetched detailed blocks."
+    },
+    {
+      "chart": "Hashrate and difficulty, 1y",
+      "source": "/api/v1/mining/hashrate/1y",
+      "mapping": "Plot hashrates[].avgHashrate against timestamp and difficulty[].difficulty against time using separate units/axes. Render currentHashrate/currentDifficulty. Hashrate / 1e18 => EH/s, / 1e21 => ZH/s. Difficulty / 1e12 => T."
+    }
+  ],
+  "cadence_and_access": {
+    "observed": "All fetched Mempool endpoints returned Access-Control-Allow-Origin: *. Mining pool, reward and hashrate results returned max-age=120. Mempool REST returned max-age=1. Blocks, fees, projected blocks, and difficulty returned no-cache plus public. Cache headers are not an allowed polling rate.",
+    "recommended_not_provider_contract": "Only active sphere scene starts exclusive feeds; stop/abort on leave and while hidden. Cache/dedupe identical data across room selections. At most one in-flight request per resource. New blocks invalidate recent-block/144/production views; a visible-only 30-60s fallback can refresh small live summaries. Do not refetch unchanged historical pages. Mining histories can use a several-minute cadence respecting cache age. Honor Retry-After and back off on 429; preserve last successful data as stale.",
+    "rate_terms": "Mempool official REST docs state rate limits apply, exceeding them yields HTTP 429, repeated excess may lead to a ban, enterprise sponsorship offers higher limits. No fixed numeric allowance was verified. No TimechainIndex rate limit or redistribution terms were found in fetched public documentation."
+  },
+  "timechainindex_api": {
+    "docs_url": "https://api.timechainindex.com/sections/network.html",
+    "documented_endpoints": [
+      "https://api.timechainindex.com/net_stats_block_frequency",
+      "https://api.timechainindex.com/net_stats_daily_overview",
+      "https://api.timechainindex.com/net_stats_monthly_overview",
+      "https://api.timechainindex.com/net_stats_yearly_overview",
+      "https://api.timechainindex.com/net_stats_epoch_overview",
+      "https://api.timechainindex.com/miners_overview"
+    ],
+    "auth_verification": {
+      "url": "https://api.timechainindex.com/net_stats_block_frequency",
+      "status": 401,
+      "body_subset": {
+        "error": "API key required"
+      },
+      "cors": "*"
+    },
+    "sample_status": "The following examples are from published docs, NOT authenticated live payloads.",
+    "documented_samples": {
+      "block_frequency": [
+        {
+          "day": 20260605,
+          "block_count": "135"
+        }
+      ],
+      "daily_overview": [
+        {
+          "day": 20260605,
+          "min_block": "952,409",
+          "max_block": "952,543",
+          "block_count": "135",
+          "real_subsidy": "421.875",
+          "fees": "3.93197723",
+          "txn_count": "569,981"
+        }
+      ],
+      "miners_overview": [
+        {
+          "miner": "Unknown",
+          "block_count": 190015,
+          "subsidy": 8697607.50431067,
+          "fees": 10457.71875087
+        }
+      ]
+    },
+    "notes": [
+      "Never ship an API key in the static client; a keyed integration requires an explicitly configured server secret/proxy.",
+      "These documented aggregate endpoints do not establish a last-144-block or one-week response contract.",
+      "Current OBL timechain-data.js separately uses six public /OogaBooga/ endpoints for existing distribution/holdings boards; no additional /OogaBooga/ block-chart endpoint has been verified."
+    ]
+  },
+  "implementation_cautions": [
+    "Do not load third-party chart scripts or embed the source website; draw native OBL charts under current CSP.",
+    "Treat malformed/missing fields as unavailable; never coerce them to zero or label stale data LIVE.",
+    "Snapshots can race a new block/reorg: validate contiguous heights and parent hashes, deduplicate and repair bounded history before aggregating.",
+    "Global Bitcoin data may be shared/cached; room membership and voice must remain separately isolated.",
+    "This research establishes API feasibility, not a guarantee that all named charts reproduce TimechainIndex formulas exactly."
+  ]
+}

@@ -33,6 +33,7 @@
     let cameraCoverEntry = null, cameraCoverSource = null, cameraCoverFace = -1;
     let activeCamera = null, cameraAspect = 1, hasCamera = false, near = 0, far = Infinity, tanX = 1, tanY = 1, planeX = 1, planeY = 1, cameraX = 0, cameraY = 0, cameraZ = 0;
     let lineUsed = 0, linesChanged = false, edgeLo = 0, edgeHi = 1;
+    let boundarySpan = 0, boundaryFirstDepth = 0, boundaryLastDepth = 0;
     // Emission is a pure function of the collected frame: while the camera, the actor anchor, the
     // retained set, candidate membership and every entry's collected state are unchanged since the
     // last emission, the existing lines already are the output, so the emission block is skipped.
@@ -424,7 +425,7 @@
         if (!grid) grid = entry.boundaryGrid = { active: false, capacity: 0, size: 0, offsets: null, cursors: null, spans: null, indices: null, scaleX: 0, scaleY: 0 };
         const size = count >= 512 ? 32 : 16;
         if (grid.size < size) { grid.size = size; grid.offsets = new Uint32Array(size * size + 1); grid.cursors = new Uint32Array(size * size); }
-        if (grid.capacity < count) { grid.capacity = count; grid.indices = new Uint32Array(count * 16); grid.spans = new Uint8Array(count * 4); }
+        if (grid.capacity < count) { grid.capacity = count; grid.indices = new Uint32Array(count * 32); grid.spans = new Uint8Array(count * 4); }
       }
     };
     const resize = () => {
@@ -609,6 +610,8 @@
       }
       for (let n = 0; n < registered.length; n++) {
         const entry = registered[n], node = entry.node, geometry = geometries.get(node.geometry), w = node.world;
+        // Initialized hidden entries cannot block rays; reappearing ones refresh through the shown transition.
+        if (!entry.shown && entry.source === node.geometry && entry.boundsGeometry === geometry && !visible(node)) continue;
         let worldChanged = false;
         for (let i = 0; i < 16; i++) if (entry.world[i] !== w[i]) { worldChanged = true; entry.world[i] = w[i]; }
         // Scale and vertical bounds follow the matrix and geometry only; visibility is still read every frame.
@@ -1527,7 +1530,7 @@
         if (spans[at] === size) continue;
         for (let y = spans[at + 1]; y <= spans[at + 3]; y++) for (let x = spans[at]; x <= spans[at + 2]; x++) {
           const cell = y * size + x;
-          grid.indices[offsets[cell] + cursors[cell]++] = i * 10;
+          grid.indices[offsets[cell] + cursors[cell]++] = i;
         }
       }
       grid.active = true; stats.boundaryGridBuilds++;
@@ -1560,12 +1563,10 @@
       }
       grid.active = true;
     };
-    const boundaryTriangle = (entry, at, sx, sy, endDepth) => {
-      const boxes = entry.boundaryBoxes, box = at / 10 * 4;
-      if (sx < boxes[box] || sx > boxes[box + 2] || sy < boxes[box + 1] || sy > boxes[box + 3]) return false;
+    const boundaryTriangle = (entry, at, sx, sy) => {
       stats.boundaryTriangles++;
-      const v = entry.boundaryTriangles, det = v[at] * sx + v[at + 1] * sy + v[at + 2], span = endDepth - near;
-      if (Math.abs(det * span) < 1e-10) return false;
+      const v = entry.boundaryTriangles, det = v[at] * sx + v[at + 1] * sy + v[at + 2];
+      if (Math.abs(det * boundarySpan) < 1e-10) return false;
       // Test barycentric numerators before dividing. Almost every union-ray
       // candidate misses, so only a triangle containing the ray needs depth.
       const sign = det < 0 ? -1 : 1, magnitude = det * sign, tolerance = magnitude * 1e-7;
@@ -1574,26 +1575,47 @@
       const w = (v[at + 6] * sx + v[at + 7] * sy + v[at + 8]) * sign;
       if (w < -tolerance || u + w > magnitude + tolerance) return false;
       const depth = v[at + 9] / det;
-      if (depth <= near + span * 1e-5 || depth >= endDepth - span * 1e-5) return false;
+      if (depth <= boundaryFirstDepth || depth >= boundaryLastDepth) return false;
       if (entry.clipMinY === -Infinity && entry.worldMinY === -Infinity && entry.worldMaxY === Infinity) return true;
       const ray = entry.boundaryRay, y = ray[1] + (ray[4] * sx + ray[7] * sy + ray[10]) * depth;
       const worldY = cameraY + (cameraView[4] * sx + cameraView[5] * sy - cameraView[6]) * depth;
       return y >= entry.clipMinY && worldY >= entry.worldMinY && worldY <= entry.worldMaxY;
     };
-    const entryBoundaryHit = (e, sx, sy, endDepth, side) => {
+    const entryBoundaryHit = (e, sx, sy, side) => {
       stats.boundaryEntries++;
       if (!e.visible) return false;
       const b = e.boundaryBounds, g = e.geometry;
       if (sx < b[0] || sx > b[2] || sy < b[1] || sy > b[3]) return false;
-      const nodes = e.boundaryNodes, previous = e.boundaryHits[side];
-      if (previous >= 0 && boundaryTriangle(e, previous, sx, sy, endDepth)) return true;
+      const nodes = e.boundaryNodes, boxes = e.boundaryBoxes, previous = e.boundaryHits[side];
+      // Most candidates miss their projected box. Reject them in the scan
+      // before calling the exact triangle predicate.
+      if (previous >= 0) {
+        const box = previous * 4;
+        if (!(sx < boxes[box] || sx > boxes[box + 2] || sy < boxes[box + 1] || sy > boxes[box + 3]) && boundaryTriangle(e, previous * 10, sx, sy)) return true;
+      }
+      // The two union rays are a fraction of a pixel apart. The other side's
+      // triangle is another exact hint when this side crosses a triangle edge.
+      const opposite = e.boundaryHits[1 - side];
+      if (opposite >= 0 && opposite !== previous) {
+        const box = opposite * 4;
+        if (!(sx < boxes[box] || sx > boxes[box + 2] || sy < boxes[box + 1] || sy > boxes[box + 3]) && boundaryTriangle(e, opposite * 10, sx, sy)) { e.boundaryHits[side] = opposite; return true; }
+      }
       const grid = e.boundaryGrid;
       if (grid && grid.active) {
         stats.boundaryGridQueries++;
         const size = grid.size, x = Math.min(size - 1, Math.floor((sx - b[0]) * grid.scaleX)), y = Math.min(size - 1, Math.floor((sy - b[1]) * grid.scaleY)), cell = y * size + x;
         for (let n = grid.offsets[cell], end = grid.offsets[cell + 1]; n < end; n++) {
           const triangle = grid.indices[n];
-          if (triangle !== previous && boundaryTriangle(e, triangle, sx, sy, endDepth)) { e.boundaryHits[side] = triangle; return true; }
+          if (triangle === previous) continue;
+          const box = triangle * 4;
+          if (sx < boxes[box] || sx > boxes[box + 2] || sy < boxes[box + 1] || sy > boxes[box + 3]) continue;
+          if (boundaryTriangle(e, triangle * 10, sx, sy)) {
+            // Keep this cell's latest hit first for nearby rays from other edges.
+            const first = grid.offsets[cell];
+            if (n !== first) { grid.indices[n] = grid.indices[first]; grid.indices[first] = triangle; }
+            e.boundaryHits[side] = triangle;
+            return true;
+          }
         }
         return false;
       }
@@ -1606,18 +1628,21 @@
         // The exact triangle query checks finite depth and every clip plane;
         // a second local-space ray/box query adds no hit information here.
         for (let n = g.starts[id], end = n + g.counts[id]; n < end; n++) {
-          const triangle = g.indices[n] * 10;
-          if (triangle !== previous && boundaryTriangle(e, triangle, sx, sy, endDepth)) { e.boundaryHits[side] = triangle; return true; }
+          const triangle = g.indices[n];
+          if (triangle === previous) continue;
+          const box = triangle * 4;
+          if (sx < boxes[box] || sx > boxes[box + 2] || sy < boxes[box + 1] || sy > boxes[box + 3]) continue;
+          if (boundaryTriangle(e, triangle * 10, sx, sy)) { e.boundaryHits[side] = triangle; return true; }
         }
       }
       return false;
     };
-    const ownerHit = (group, sx, sy, endDepth, side) => {
+    const ownerHit = (group, sx, sy, side) => {
       const previous = group.boundaryEntries[side];
       // Adjacent union rays usually cross the same part. This is only a hint:
       // its current visibility, clipping and triangles are still tested. Each
       // side keeps its own hint so the two offset rays cannot evict each other.
-      if (previous && entryBoundaryHit(previous, sx, sy, endDepth, side)) return true;
+      if (previous && entryBoundaryHit(previous, sx, sy, side)) return true;
       const grid = group.boundaryGrid;
       if (grid && grid.active) {
         const b = grid.bounds;
@@ -1625,13 +1650,13 @@
         const x = Math.min(BOUNDARY_GRID - 1, Math.floor((sx - b[0]) * grid.scaleX)), y = Math.min(BOUNDARY_GRID - 1, Math.floor((sy - b[1]) * grid.scaleY)), cell = y * BOUNDARY_GRID + x;
         for (let n = cell * grid.stride, end = n + grid.counts[cell]; n < end; n++) {
           const entry = group[grid.indices[n]];
-          if (entry !== previous && entryBoundaryHit(entry, sx, sy, endDepth, side)) { group.boundaryEntries[side] = entry; return true; }
+          if (entry !== previous && entryBoundaryHit(entry, sx, sy, side)) { group.boundaryEntries[side] = entry; return true; }
         }
         return false;
       }
       for (let i = 0; i < group.length; i++) {
         const entry = group[i];
-        if (entry !== previous && entryBoundaryHit(entry, sx, sy, endDepth, side)) { group.boundaryEntries[side] = entry; return true; }
+        if (entry !== previous && entryBoundaryHit(entry, sx, sy, side)) { group.boundaryEntries[side] = entry; return true; }
       }
       return false;
     };
@@ -1661,8 +1686,21 @@
         group.boundaryDepth = Math.min(far, endDepth); group.boundaryStamp = collectStamp;
       }
       const endDepth = group.boundaryDepth;
-      return endDepth > near && ownerHit(group, (rx + px) / depth, (ry + py) / depth, endDepth, 0)
-        !== ownerHit(group, (rx - px) / depth, (ry - py) / depth, endDepth, 1);
+      // Both rays and every triangle share these limits; this query has no callbacks.
+      boundarySpan = endDepth - near;
+      boundaryFirstDepth = near + boundarySpan * 1e-5; boundaryLastDepth = endDepth - boundarySpan * 1e-5;
+      if (!(endDepth > near)) return false;
+      const left = ownerHit(group, (rx + px) / depth, (ry + py) / depth, 0);
+      const sx = (rx - px) / depth, sy = (ry - py) / depth;
+      if (left) {
+        // The first ray already validated this entry. Test its triangle directly for the adjacent ray.
+        const entry = group.boundaryEntries[0], triangle = entry.boundaryHits[0], b = entry.boundaryBounds, boxes = entry.boundaryBoxes, at = triangle * 4;
+        if (!(sx < b[0] || sx > b[2] || sy < b[1] || sy > b[3] || sx < boxes[at] || sx > boxes[at + 2] || sy < boxes[at + 1] || sy > boxes[at + 3]) && boundaryTriangle(entry, triangle * 10, sx, sy)) {
+          group.boundaryEntries[1] = entry; entry.boundaryHits[1] = triangle;
+          return false;
+        }
+      }
+      return left !== ownerHit(group, sx, sy, 1);
     };
     const refresh = () => {
       // Registration boundaries size every reused buffer from actual scene contents; the frame path never grows

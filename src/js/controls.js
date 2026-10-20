@@ -7,7 +7,11 @@
     z: "up", " ": "up", x: "down", arrowup: "forward", arrowdown: "back", arrowleft: "left", arrowright: "right", shift: "sprint"
   };
   const KNOB = 18;
+  const SHIFT_KEYS = ["ShiftLeft", "ShiftRight", "Shift"];
   const keyName = (e) => e.key === "Shift" && (e.code === "ShiftRight" || e.location === 2) ? "peek" : KEYS[e.key.toLowerCase()];
+  const uiKey = (e) => e.target && (e.target.isContentEditable || e.target.closest
+    && (e.target.closest("input, textarea, select, [role='dialog'], dialog, #sheet")
+      || (e.key === "Tab" || e.key === "Enter" || e.key === " ") && e.target.closest("button, a[href], summary, [role='button']")));
   // Joystick state x/y track the pointer normalized to -1..1.
   const joystick = (el) => {
     const knob = el.firstElementChild;
@@ -58,11 +62,58 @@
     return s;
   };
   // Joystick bases, a hold-to-climb button, a canvas whose mouse chord walks, and a Space handler
-  const create = ({ move = null, look = null, boost = null, chord = null, onAction = null, pressActions = false, shooter = () => false, canDescend = () => true } = {}) => {
+  const create = ({ move = null, look = null, boost = null, chord = null, onAction = null, pressActions = false, tabNavigation = false, shooter = () => false, canDescend = () => true } = {}) => {
     const held = { forward: 0, back: 0, left: 0, right: 0, yawLeft: 0, yawRight: 0, pitchDown: 0, pitchUp: 0, up: 0, space: 0, down: 0, boost: 0, chord: 0, sprint: 0, peek: 0 };
     const axes = { x: 0, y: 0, up: 0, yaw: 0, pitch: 0, orbitYaw: 0, sprint: 0, peek: 0, shiftTap: 0 };
     let spaceDown = false, boostPointer = null, boostClick = false, shiftAt = 0, shiftUsed = false, shiftTap = 0;
-    const typing = (e) => e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || (e.target.closest && e.target.closest("dialog, #sheet")));
+    const downKeys = new Set(), blockedKeys = new Set();
+    let tabConsumed = false;
+    let pointerButtons = 0, blockedPointerButtons = 0;
+    const typing = (e) => tabNavigation ? uiKey(e) : e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA"
+      || e.target.closest && e.target.closest("dialog, #sheet"));
+    const consumeKey = (e) => { e.preventDefault(); e.stopImmediatePropagation(); };
+    const consumeTab = (e) => { tabConsumed = true; consumeKey(e); };
+    // Runs before actor shortcuts. Tab cancels held input even when the
+    // browser owns navigation; those keys need a release before playing again.
+    const captureKeyDown = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "Tab") {
+        if (e.repeat) { if (tabConsumed) consumeKey(e); return; }
+        tabConsumed = false;
+        for (const key of downKeys) blockedKeys.add(key);
+        blockedPointerButtons |= pointerButtons;
+        reset();
+        return;
+      }
+      if (uiKey(e)) return;
+      const key = e.code || e.key;
+      // A fresh press proves release, including a keyup missed while unfocused.
+      // Repeats from an interrupted hold remain blocked.
+      if (!e.repeat) {
+        // Blur forgets physical holds; Tab retains them. Either fresh Shift
+        // recovers stale blur blocks, but cannot release a Shift held through Tab.
+        if (e.key === "Shift") for (const shift of SHIFT_KEYS) if (!downKeys.has(shift)) blockedKeys.delete(shift);
+        blockedKeys.delete(key);
+      }
+      if (blockedKeys.has(key)
+        || e.shiftKey && (blockedKeys.has("ShiftLeft") || blockedKeys.has("ShiftRight") || blockedKeys.has("Shift"))) { consumeKey(e); return; }
+      // A physical keyboard has a bounded set of simultaneous presses.
+      if (downKeys.size < 64) downKeys.add(key);
+    };
+    const captureKeyUp = (e) => {
+      const key = e.code || e.key;
+      downKeys.delete(key); blockedKeys.delete(key);
+      if (e.key === "Tab") tabConsumed = false;
+    };
+    const releaseKeys = () => {
+      downKeys.clear(); blockedKeys.clear(); tabConsumed = false;
+      pointerButtons = blockedPointerButtons = 0;
+    };
+    const blurKeys = () => {
+      for (const key of downKeys) blockedKeys.add(key);
+      downKeys.clear(); tabConsumed = false;
+      pointerButtons = blockedPointerButtons = 0;
+    };
     const onKeyDown = (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey || typing(e)) return;
       const name = pressActions && e.key === " " ? "space" : keyName(e);
@@ -96,6 +147,11 @@
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", onBlur);
+    if (tabNavigation) {
+      window.addEventListener("keydown", captureKeyDown, true);
+      window.addEventListener("keyup", captureKeyUp, true);
+      window.addEventListener("blur", blurKeys);
+    }
     const moveStick = move ? joystick(move) : null;
     const lookStick = look ? joystick(look) : null;
     // A pointer press has the same action/thrust priority as Space.
@@ -114,7 +170,7 @@
       held.boost = 0;
     };
     const onBoostClick = (e) => {
-      if (boostClick && e.detail > 0) { e.preventDefault(); e.stopImmediatePropagation(); }
+      if (boostClick && e.detail > 0) { e.preventDefault(); e.stopImmediatePropagation(); boost.blur(); }
       boostClick = false;
     };
     if (boost) {
@@ -126,7 +182,12 @@
     }
     // Both mouse buttons down means forward (as W); a chorded press arrives as a move event.
     const onChord = (e) => {
-      if (e.pointerType === "mouse") held.chord = (e.buttons & 3) === 3 ? 1 : 0;
+      if (e.pointerType !== "mouse") return;
+      pointerButtons = e.buttons;
+      // A new pointerdown means every previous mouse button was released,
+      // even if that release happened outside the canvas after Tab.
+      blockedPointerButtons = e.type === "pointerdown" ? 0 : blockedPointerButtons & e.buttons;
+      held.chord = (e.buttons & ~blockedPointerButtons & 3) === 3 ? 1 : 0;
     };
     if (chord) {
       chord.addEventListener("pointerdown", onChord);
@@ -153,6 +214,12 @@
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
+      if (tabNavigation) {
+        window.removeEventListener("keydown", captureKeyDown, true);
+        window.removeEventListener("keyup", captureKeyUp, true);
+        window.removeEventListener("blur", blurKeys);
+      }
+      releaseKeys();
       if (boost) {
         boost.removeEventListener("pointerdown", onBoostDown);
         boost.removeEventListener("pointerup", onBoostUp);
@@ -176,7 +243,7 @@
       boostClick = false;
     };
     const reset = () => { onBlur(); if (moveStick) moveStick.reset(); if (lookStick) lookStick.reset(); };
-    return { read, axes, clearPointer, reset, dispose, get rightShift() { return !!held.peek; } };
+    return { read, axes, clearPointer, reset, consumeTab, dispose, get rightShift() { return !!held.peek; } };
   };
-  BL.controls = { create };
+  BL.controls = { create, uiKey };
 })();

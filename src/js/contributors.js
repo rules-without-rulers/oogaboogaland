@@ -47,7 +47,7 @@
   };
   const listeners = new Set(), snapshotRepos = new Set();
   const repositoryOf = BL.activityRepos.keyOf;
-  // Repeatable debug-only fixture: ooga=handle:clank:lab,obl,lf (or chill/sleep).
+  // Repeatable debug-only fixture: ooga=handle:clank:lab,obl,lf,bca (or chill/sleep).
   // Unlisted owners sleep; explicit caves replace both activity and maintainer defaults.
   // Resolve handles and cave aliases once, keeping state/site reads allocation-free.
   const debugRoster = params.has("debug") && params.has("ooga"), debugModes = new Map();
@@ -63,7 +63,7 @@
         repos.set(slot.additionalRepo, slot.repo);
         repos.set(slot.additionalRepo.slice(slot.additionalRepo.indexOf("/") + 1), slot.repo);
       }
-      repos.set(slot.scene === "factory" ? "lf" : slot.status === "mirror" ? "obl" : slot.scene || slot.status, slot.repo);
+      repos.set(slot.scene === "factory" ? "lf" : slot.status === "mirror" ? "obl" : slot.scene || slot.place || slot.status, slot.repo);
     }
     for (const value of params.getAll("ooga")) {
       const [name, mode, caves = ""] = value.toLowerCase().split(":", 3);

@@ -31,12 +31,19 @@
         description: "Walk through ₿IFRÖST to DSB Land: a river boat, the Bitcoin coaster riding the live price, the Meme Shop and NodeRunner TV." },
       { path: "entropylab", scene: "hub", place: "lab", image: "entropylab", title: "EntropyLab",
         description: "The EntropyLab cave, where donated bananas feed the voxel cavemen who stand for its contributors." },
+      { path: "bca", scene: "hub", place: "bca", title: "B.C.A.",
+        description: "Banana Certified Accounting: two suited gorillas at walnut desks count every banana on abacuses. Count bananas. Keep receipts. Build in public." },
       { path: "lightning", scene: "factory", image: "lightning", title: "Lightning Factory",
         description: "A Lightning node at work as a factory in a tiered cavern, run by gorillas in hard hats: forwards ride the conduits through the glowing core." },
       { path: "oogaarcade", scene: "arcade", title: "Ooga Arcade",
         description: "A torchlit cave of arcade cabinets, one for every Ooga game: walk up to Ooga Rally, Drop, Orbit or Mine and play." },
       { path: "sphere", scene: "hub", place: "timechain", image: "sphere", title: "Timechain Sphere",
-        description: "Sani's walk-in sphere, its six inner walls lit with live Timechain Index data: BTC distribution, balances, UTXO sizes, ETF and exchange holdings." }
+        description: "The Timechain Sphere's doors: choose one of nine rooms at the keypad. Inside, live block and mining charts, Timechain Index holdings and Sani in his recliner." },
+      // The nine rooms, each its own address: 1–3 at 1×, 4–6 at 1.5×, 7–9 at 2× (timechain-rooms.js).
+      ...Array.from({ length: 9 }, (_, i) => ({
+        path: `sphere-${i + 1}`, scene: "timechain", place: String(i + 1), title: `Timechain Sphere Room ${i + 1}`,
+        description: `Room ${i + 1} of the Timechain Sphere, ${["normal sized", "half as big again", "twice the size"][Math.floor(i / 3)]}: live block and mining charts from mempool.space on a curved wall of screens, Timechain Index holdings at the desk, Sani in his recliner.`
+      }))
     ]
   };
 })();

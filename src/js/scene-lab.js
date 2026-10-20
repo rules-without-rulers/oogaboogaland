@@ -123,19 +123,21 @@
     const startY = die.position.y;
     const r0 = { ...die.rotation };
     const final = models.dieRotationFor(result, r0.y + 1.7);
-    addTween({ dur: 0.7, ease: ease.linear, update: (k) => {
-      die.position.y = startY + Math.sin(k * Math.PI) * 0.6;
-      die.rotation.x = r0.x + k * Math.PI * 4;
-      die.rotation.z = r0.z + k * Math.PI * 2;
-      die.rotation.y = r0.y + k * 1.7;
-    }, done: () => {
-      Object.assign(die.rotation, final);
-      die.position.y = startY;
-      die.rolling = false;
-      die.lastRoll = result;
-      const w = die.world;
-      fx.sayAt(w[12], w[13] + die.dieSize * 0.5 + 0.2, w[14], `Rolled ${result}`, 1.8);
-    } });
+    addTween({
+      dur: 0.7, ease: ease.linear, update: (k) => {
+        die.position.y = startY + Math.sin(k * Math.PI) * 0.6;
+        die.rotation.x = r0.x + k * Math.PI * 4;
+        die.rotation.z = r0.z + k * Math.PI * 2;
+        die.rotation.y = r0.y + k * 1.7;
+      }, done: () => {
+        Object.assign(die.rotation, final);
+        die.position.y = startY;
+        die.rolling = false;
+        die.lastRoll = result;
+        const w = die.world;
+        fx.sayAt(w[12], w[13] + die.dieSize * 0.5 + 0.2, w[14], `Rolled ${result}`, 1.8);
+      }
+    });
   };
   const flipCard = (card) => {
     if (card.flipping) return;
@@ -306,8 +308,8 @@
     footsteps.update(drivenHere);
     dust.update(elapsed, pilot.orbit.target.x, pilot.orbit.target.z);
   };
-  const drawExtra = (ctx2d, project, drawBubble) => {
-    crew.drawQuotes(ctx2d, project, drawBubble);
+  const drawExtra = (ctx2d, project) => {
+    crew.drawDrops(ctx2d, project);
     remotes.drawNames(ctx2d, project);
   };
   const overlay = (dt) => fx.drawOverlay(dt, drawExtra);
@@ -335,11 +337,12 @@
     location.reload();
   };
   const onKey = (e) => {
+    if (e.key === "0" && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) { pilot.resetCamera(); return; }
     if ((e.key === "x" || e.key === "X") && !e.repeat && pilot.modeAction("mode-toggle")) return;
     if ((e.key === "1" || e.key === "2") && pilot.weaponMode(Number(e.key))) return;
     if (e.key === "Escape") {
-      if (pilot.player) pilot.release();
-      else go("hub");
+      if (!pilot.escape()) go("hub");
+      return;
     }
     // N spins a driven Ooga's nunchaku, C changes the colourway of one built with two.
     if ((e.key === "n" || e.key === "N") && !e.repeat && crew.twirl()) return;
@@ -379,7 +382,7 @@
     hud.setAreaLabel("LAB");
     hooks = {};
     input = interactMod.create({ canvas: ctx.canvas, renderer, camera, hooks });
-    pilot = pilotMod.create({ renderer, canvas: ctx.canvas, camera, hud, presets: PRESETS, landing: "pile", pitch: PITCH, dist: DIST, follow: FOLLOW, fly: FLY, clampTarget, clampCamera, ceilingAt: () => 4.3, coarse: COARSE, mayPossess: (cave) => cave.contributor ? BL.net.mayDrive(cave.traits.name, BL.contributors.stateFor(cave.contributor) === "working") : null, close: { eyeHeight: 1.1, eyeRatio: 0.95, eyeForward: 0.16, pitch: [-1.35, 1.35], trailingDist: 4, orbitDist: 5, maxStep: 0.6, groundAt: () => 0 } });
+    pilot = pilotMod.create({ renderer, canvas: ctx.canvas, camera, hud, presets: PRESETS, landing: "pile", pitch: PITCH, dist: DIST, follow: FOLLOW, fly: FLY, clampTarget, clampCamera, ceilingAt: () => 4.3, coarse: COARSE, mayPossess: (cave) => cave.contributor ? BL.net.mayDrive(cave.traits.name) : null, close: { eyeHeight: 1.1, eyeRatio: 0.95, eyeForward: 0.16, pitch: [-1.35, 1.35], trailingDist: 4, orbitDist: 5, maxStep: 0.6, groundAt: () => 0 } });
     const shared = { root, input, hooks, hud, game, world, renderer, camera, overlay: ctx.overlay, tickerAt: TICKER_AT, buildSpots: BUILD_SPOTS.slice(), walkIn: WALK_IN, clampDrag, viewYaw: PRESETS.pile.yaw, bedrolls: lab.bedrolls, pileScale: 0.45, onShown: (shown) => { lab.equipment.abacus.setValue(shown); }, walkable, reticleTarget: () => "object" };
     shared.onWeaponImpact = (source, hit, dx, dy, dz, power) => {
       if (hit.owner.kind === "caveman") crew.damage(hit.owner.cave, power, source === crew.player);
@@ -404,7 +407,6 @@
     }];
     mark("pile");
     // As in the hub: where accounts exist, driving shows online only for a signed-in visitor.
-    shared.localOnline = () => !BL.net.state.backend || !!BL.net.state.me;
     shared.outsideActors = () => remotes ? remotes.actors() : NO_ACTORS;
     shared.outsideActorHeight = BL.remotePlayers.BODY_HEIGHT;
     crew = shared.crew = crewMod.create(shared);
@@ -476,13 +478,17 @@
       }
       else if (action.startsWith("mode-")) pilot.modeAction(action);
       else if (action.startsWith("weapon-") || action === "magazine-swap") pilot.weaponAction(action);
-      else if (action === "reset-view") pilot.goPreset("pile");
+      else if (action === "reset-view") pilot.resetCamera();
       else if (action === "leave") go("hub");
     });
     pulseNodes = [lab.equipment.monitor, lab.equipment.tower, lab.equipment.abacus.node.children[0]];
     crew.refreshStates(true);
     syncRackLeds();
-    if (ctx.from === null && preloadedEquipment) {
+    const returningOwn = pilot.loginViewRestored && BL.net.ownCharacter();
+    if (returningOwn) {
+      const cave = crew.cavemen.get(returningOwn.handle);
+      if (cave) pilot.possess(cave);
+    } else if (ctx.from === null && preloadedEquipment) {
       const name = params.get("character")?.trim().toLowerCase();
       const contributor = params.has("character") ? contributors.activeRoster.find(entry => entry.name.toLowerCase() === name)
         : contributors.activeRoster.find(entry => crew.stateOf(crew.cavemen.get(entry.name)) === "working") || contributors.activeRoster[0];
@@ -527,6 +533,8 @@
     mark("visibility");
   };
   const leave = () => {
+    world.pilotDetached = !pilot.player;
+    world.pilot = pilot.player ? pilot.player.traits.name : null;
     BL.net.setBody(null);
     window.clearInterval(stateTimer);
     unsubscribeActivity();
