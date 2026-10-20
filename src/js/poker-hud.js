@@ -41,7 +41,9 @@
     const auto = el.querySelector('[data-poker-option="auto"]'), sound = el.querySelector('[data-poker-option="sound"]');
     const history = Array.from({ length: 10 }, () => []), recorded = new Int32Array(10);
     let snapshot = null, lastIndex = -1, lastHand = -1, turnKey = "", focused = false, paused = false, audio = null, lastClock = "", lastHistory = "";
-    let live = null;
+    // `floor`: the live tables' connection as the scene reports it, or null; `live`: the same for the selected table,
+    // null at a practice table (tables below R.LIVE_FROM), so the table view follows the table being looked at.
+    let floor = null, live = null;
     let filter = "all", viewBusy = false, lastLog = "", viewerId = null;
     const filterButtons = Array.from(el.querySelectorAll("[data-poker-filter]"));
     const tableSelect = by("table-select"), tableOptions = [];
@@ -66,6 +68,7 @@
     for (let i = 0; i < 10; i++) {
       const b = make("button", "poker-table-row", by("tables")); b.type = "button"; b.dataset.watch = i;
       const title = make("strong", "", b), info = make("span", "", b), state = make("small", "", b);
+      const tag = make("em", "poker-row-tag", b); tag.textContent = i >= R.LIVE_FROM ? "LIVE" : "PRACTICE"; b.classList.toggle("is-live", i >= R.LIVE_FROM);
       const dots = make("div", "poker-seat-dots", b); dots.setAttribute("aria-hidden", "true");
       for (let j = 0; j < R.SEATS; j++) make("i", "", dots);
       title.textContent = String(i + 1).padStart(2, "0"); rows.push({ b, info, state, dots, open: true, playing: false });
@@ -168,11 +171,14 @@
       else { document.body.removeAttribute("data-poker-table-view"); lobby.removeAttribute("data-folded"); if (lastIndex >= 0) rows[lastIndex].b.focus({ preventScroll: true }); }
     };
     const update = (index, snapshots, viewer, pendingStand, isPaused, autoDeal) => {
-      const previous = snapshot, switched = index !== lastIndex;
+      const previous = snapshot, switched = index !== lastIndex, liveTable = index >= R.LIVE_FROM;
+      live = liveTable ? floor : null;
+      // A live table with no connection yet: signed out on the site, sign in; otherwise join the live tables.
+      const site = BL.net.state.backend, offline = liveTable && !floor, signIn = offline && site && !BL.net.state.me;
       const s = snapshot = snapshots[index], ownIndex = s.seats.findIndex(p => p?.id === viewer), own = s.seats[ownIndex], legal = s.legal;
       viewerId = viewer;
       by("voice-label").textContent = `Table ${index + 1} voice · spectators welcome`;
-      const blocked = viewBusy || !!live && (live.busy || live.connection !== "live");
+      const blocked = viewBusy || offline || !!live && (live.busy || live.connection !== "live");
       // `den`: the Worker's dealer deals the live tables (poker-net.js); `fair`: the encrypted-deck service does.
       const den = live?.kind === "den", fair = !!live && !den;
       // The dealer's commit-reveal: committed before the deal, checked by this page once the hand is over.
@@ -184,15 +190,16 @@
       const ready = s.seats.filter(p => p && p.stack > 0 && !p.out).length;
       paused = isPaused; const idle = (s.phase === "waiting" || s.phase === "showdown") && (!fair || ["idle", "complete", "aborted"].includes(s.fairPhase)), fresh = switched || s.hand !== lastHand;
       snapshots.forEach((table, i) => {
-        const row = rows[i], occupied = table.seats.filter(Boolean).length;
+        const row = rows[i], occupied = table.seats.filter(Boolean).length, rowLive = i >= R.LIVE_FROM;
+        const rowDen = rowLive && floor?.kind === "den", rowFair = rowLive && !!floor && !rowDen;
         // The dealer seats a newcomer mid-hand for the next deal; elsewhere seats open between hands.
-        row.open = occupied < R.SEATS && (den || ["waiting", "showdown"].includes(table.phase) && (!fair || ["idle", "complete", "aborted"].includes(table.fairPhase)));
-        row.playing = !["waiting", "showdown"].includes(table.phase) || fair && !["idle", "complete", "aborted"].includes(table.fairPhase);
-        row.info.textContent = `${occupied} / ${R.SEATS}`; row.state.textContent = row.open && !row.playing ? occupied ? "Join between hands" : "Start a table" : row.open ? `${streetName[table.phase]} · seat open` : row.playing ? `${streetName[table.phase] === "Waiting for players" ? "Preparing hand" : streetName[table.phase]} · Watch` : "Table full · Watch";
-        row.b.classList.toggle("selected", i === index); row.b.classList.toggle("your-table", !!viewer && i === index); row.b.disabled = blocked || !!viewer && i !== index;
+        row.open = occupied < R.SEATS && (rowDen || ["waiting", "showdown"].includes(table.phase) && (!rowFair || ["idle", "complete", "aborted"].includes(table.fairPhase)));
+        row.playing = !["waiting", "showdown"].includes(table.phase) || rowFair && !["idle", "complete", "aborted"].includes(table.fairPhase);
+        row.info.textContent = `${occupied} / ${R.SEATS}`; row.state.textContent = rowLive && !floor ? site && !BL.net.state.me ? "Sign in to play live" : "Play live to join" : row.open && !row.playing ? occupied ? "Join between hands" : rowLive ? "Open · bring your bananas" : "Start a table" : row.open ? `${streetName[table.phase]} · seat open` : row.playing ? `${streetName[table.phase] === "Waiting for players" ? "Preparing hand" : streetName[table.phase]} · Watch` : "Table full · Watch";
+        row.b.classList.toggle("selected", i === index); row.b.classList.toggle("your-table", !!viewer && i === index); row.b.disabled = viewBusy || !!viewer && i !== index;
         for (let j = 0; j < R.SEATS; j++) row.dots.children[j].classList.toggle("occupied", !!table.seats[j]);
         tableOptions[i].disabled = !!viewer && i !== index;
-        row.b.setAttribute("aria-label", `Table ${i + 1}, ${occupied} of ${R.SEATS} seats, ${row.state.textContent}`);
+        row.b.setAttribute("aria-label", `Table ${i + 1}, ${rowLive ? "live" : "practice"}, ${occupied} of ${R.SEATS} seats, ${row.state.textContent}`);
         if (table.result && table.hand !== recorded[i]) {
           recorded[i] = table.hand;
           history[i].unshift(`Hand #${table.hand} · ${resultText(table)} · Board: ${table.board.map(R.cardName).join(" ") || "no community cards"}`);
@@ -234,7 +241,13 @@
         cards(node.cards, p?.inHand && !p.folded && i !== ownIndex ? p.cards : [], false, fresh);
         node.bet.textContent = p?.roundBet ? chips(p.roundBet) : ""; node.bet.hidden = !p?.roundBet;
       }
-      by("join").hidden = !!viewer; by("join").disabled = !idle && !den || s.seats.every(Boolean) || paused || blocked;
+      by("join").hidden = !!viewer; by("join").disabled = offline ? viewBusy : !idle && !den || s.seats.every(Boolean) || paused || blocked;
+      by("join").dataset.pokerAction = signIn ? "signin" : offline ? "connect" : "join";
+      by("join").textContent = signIn ? "Sign in to play live" : offline ? "Play live" : "Take a seat";
+      // Practice tables keep their bots, pause and automatic deal; live tables have the dealer.
+      by("mode-badge").textContent = liveTable ? "LIVE TABLE" : "PRACTICE";
+      by("bots").hidden = by("pause").hidden = liveTable; auto.parentElement.hidden = liveTable;
+      by("fairness").hidden = !fair;
       by("bots").disabled = !idle || s.seats.every(Boolean) || paused || blocked;
       by("start").hidden = !own && !!live || den && !idle;
       by("start").disabled = !idle || ready < 2 || paused || blocked || !!live && !own;
@@ -260,10 +273,10 @@
         if (!legal.canRaise) { raiseButton.textContent = "Raise unavailable"; amount.value = slider.value = String(legal.max); by("bet-help").textContent = "You can call or fold. Raising is not available for this action."; }
       }
       const turnText = paused ? "Demo paused · resume when ready" : pendingStand ? "Walking · your remaining turns check or fold" : legal ? `Your turn · ${legal.check ? "check for free or bet" : chips(legal.call) + " to call"}` : den && own?.out ? "You’re sitting out" : idle ? own?.stack === 0 ? den ? "Out of bananas" : "Out of chips? Your refill is free." : s.result ? "Hand complete" : den ? own ? ready < 2 ? "Waiting for another player" : "Next hand coming up" : "There’s a seat for you" : "Take a seat, add bots, deal a hand" : own?.folded ? "You folded · watching the hand" : own?.inHand && !own.stack ? "You’re all in · waiting for the result" : `${s.seats[s.turn]?.name || "Dealer"} to act`;
-      const turnLabel = blocked ? live?.connection === "failed" ? "Connection stopped" : live?.connection === "reconnecting" ? "Reconnecting to your table…" : live?.busy ? "Sending your move…" : "Connecting to live tables…" : fair && !["idle", "complete", "betting"].includes(s.fairPhase) ? fairName[s.fairPhase] || "Preparing the hand" : fair && idle && !s.result ? own ? "Ready when you are" : "There’s a seat for you" : turnText;
+      const turnLabel = offline ? signIn ? "Live table · sign in to play" : "Live table · join the live tables to play" : blocked ? live?.connection === "failed" ? "Connection stopped" : live?.connection === "reconnecting" ? "Reconnecting to your table…" : live?.busy ? "Sending your move…" : "Connecting to live tables…" : fair && !["idle", "complete", "betting"].includes(s.fairPhase) ? fairName[s.fairPhase] || "Preparing the hand" : fair && idle && !s.result ? own ? "Ready when you are" : "There’s a seat for you" : turnText;
       if (by("turn").textContent !== turnLabel) by("turn").textContent = turnLabel;
       by("turn").classList.toggle("is-yours", !!legal && !paused && !blocked);
-      by("turn-help").textContent = blocked ? live?.connection === "failed" ? den ? "Reconnect to pick up your seat where you left it." : "Reconnect to recover your seat on this device." : "Your next action unlocks when the table confirms this one." : legal ? legal.check ? "Checking keeps you in the hand for free." : "Call to match the bet, choose a raise, or fold this hand." : pendingStand ? "Your seat releases when this hand ends." : den ? denHelp(s, own, idle, ready) : idle ? !own ? "Take any open seat. Everyone starts with 1,000 free chips." : ready < 2 ? live ? "One more player is needed. Anyone seated can deal." : "Add opponents, then deal when you’re ready." : "Deal when the table is ready. Nobody owns the table." : own?.folded ? "You can watch or walk. Live players must stay connected." : !own ? "Watch this hand. Seats open when it finishes." : "Stay connected. You’ll be told when it’s your turn.";
+      by("turn-help").textContent = offline ? signIn ? "Live tables seat signed-in players with their own Oogas. Practice tables are 1 to 6." : "Play live connects you to the dealer's tables." : blocked ? live?.connection === "failed" ? den ? "Reconnect to pick up your seat where you left it." : "Reconnect to recover your seat on this device." : "Your next action unlocks when the table confirms this one." : legal ? legal.check ? "Checking keeps you in the hand for free." : "Call to match the bet, choose a raise, or fold this hand." : pendingStand ? "Your seat releases when this hand ends." : den ? denHelp(s, own, idle, ready) : idle ? !own ? "Take any open seat. Everyone starts with 1,000 free chips." : ready < 2 ? live ? "One more player is needed. Anyone seated can deal." : "Add opponents, then deal when you’re ready." : "Deal when the table is ready. Nobody owns the table." : own?.folded ? "You can watch or walk. Live players must stay connected." : !own ? "Watch this hand. Seats open when it finishes." : "Stay connected. You’ll be told when it’s your turn.";
       by("result").hidden = !s.result; by("result").textContent = resultText(s);
       const log = s.history.slice(-8).join("\n") || "The gorilla is ready. Take a seat to begin.";
       if (log !== lastLog) { by("log").textContent = log; by("log").scrollTop = by("log").scrollHeight; lastLog = log; }
@@ -291,27 +304,23 @@
       by("countdown").classList.toggle("urgent", !!live && kind !== "deal" && seconds >= 0 && seconds <= (kind ? 10 : 15));
     };
     const setLive = value => {
-      live = value;
-      const den = live?.kind === "den", fair = !!live && !den;
+      floor = value;
+      const live = floor, den = live?.kind === "den", fair = !!live && !den;
       // On the Worker's page the live tables are its dealer's and need the GitHub sign-in; elsewhere a local service's.
       const site = BL.net.state.backend, signedIn = !!BL.net.state.me;
-      by("fairness").hidden = !fair;
       const connection = viewBusy ? "connecting" : live?.connection || "practice";
       el.dataset.connection = connection;
-      by("mode-badge").textContent = live ? "LIVE TABLE" : "PRACTICE";
       by("connection").textContent = connection === "practice" ? "Practice · on your device" : connection === "failed" ? "Connection stopped" : connection === "reconnecting" ? "Reconnecting · waiting for table" : connection === "connecting" ? "Connecting to live tables…" : den ? "Connected · live tables" : ["betting", "complete"].includes(live.phase) ? "Connected · shuffle checked" : "Connected · " + (fairName[live.phase] || "waiting for players");
       by("reconnect").hidden = connection !== "failed";
       by("reconnect-floor").hidden = connection !== "failed";
-      by("connect").hidden = !!live; by("practice").hidden = !live;
-      by("connect").querySelector("small").textContent = site && !signedIn ? "Sign in with GitHub to play with people" : "Play with people · Ooga sign-in";
+      by("connect").hidden = false; by("practice").hidden = true;
+      by("connect").querySelector("small").textContent = site && !signedIn ? "Sign in with GitHub · tables 7 to 10" : `Play with people · tables ${R.LIVE_FROM + 1} to 10`;
       by("nickname-row").hidden = site;
       by("identity-note").hidden = !site;
       by("connect").disabled = viewBusy;
       el.querySelector('[data-poker-action="quick"]').disabled = viewBusy;
       by("practice").disabled = viewBusy || !!live?.busy;
-      by("live-label").textContent = viewBusy ? "Connecting to the live floor…" : den ? `Live tables · ${chips(live.wallet.bananas)} bananas off the table` : live ? "Live tables · free chips · human opponents" : site ? "Practice is ready now, or join the live tables to play with friends." : "Practice is ready now. Live tables need a connected poker service.";
-      by("bots").hidden = by("pause").hidden = !!live; auto.parentElement.hidden = !!live;
-      el.querySelector('[data-poker-action="quick"]').hidden = !!live;
+      by("live-label").textContent = viewBusy ? "Connecting to the live floor…" : den ? `Practice at tables 1 to ${R.LIVE_FROM} · live at ${R.LIVE_FROM + 1} to 10 · ${chips(live.wallet.bananas)} bananas off the table` : live ? "Live tables · free chips · human opponents" : site ? `Practice at tables 1 to ${R.LIVE_FROM}, any time. Live tables ${R.LIVE_FROM + 1} to 10 play with friends.` : "Practice is ready now. Live tables need a connected poker service.";
       if (fair) {
         by("countdown").textContent = "";
         by("fair-status").textContent = `${fairName[live.phase] || "Connecting"}${live.total ? ` · ${live.checked}/${live.total} shuffles checked` : ""}`;

@@ -8,6 +8,9 @@
   const scope = typeof window === "undefined" ? globalThis : window;
   const BL = scope.BL = scope.BL || {};
   const SEATS = 9, BUY_IN = 1000, SMALL = 5, BIG = 10;
+  // The Ember Den's floor: tables below LIVE_FROM are practice against bots on the page, the rest are the live tables
+  // the Worker's dealer deals (worker/src/poker-den.js refuses a seat below it).
+  const LIVE_FROM = 6;
   const LABELS = ["High card", "Pair", "Two pair", "Three of a kind", "Straight", "Flush", "Full house", "Four of a kind", "Straight flush"];
   const word = new Uint32Array(1);
   const randomInt = (bound) => {
@@ -306,6 +309,6 @@
     else if (l.call && !strong && roll < (l.call > own.stack / 3 ? 65 : 18)) table.act(id, "fold");
     else table.act(id, l.check ? "check" : "call");
   };
-  BL.pokerRules = { SEATS, BUY_IN, SMALL, BIG, randomInt, shuffledDeck, evaluate, settle, create: () => create(), createSealed: initial => create(true, initial),
+  BL.pokerRules = { SEATS, BUY_IN, SMALL, BIG, LIVE_FROM, randomInt, shuffledDeck, evaluate, settle, create: () => create(), createSealed: initial => create(true, initial),
     createDealer: (saved = null) => create(false, null, { late: true, saved }), botAction, cardName, commitFor, deckFrom, dealOrder, checkReveal };
 })();

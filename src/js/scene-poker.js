@@ -9,8 +9,18 @@
   let root, camera, input, hud, panel, pilot, fx, people, avatar, room, mirror, game, world, session, go;
   let leaving = false, timer = 0, selected = 0, pendingStand = false, seatTable = -1, shownCountdown = -1;
   const targets = [], snapshots = new Array(10);
-  let HERO = "local-player", connecting = false, unsubscribeAccount = null, remotes = null, footsteps = null;
+  let connecting = false, unsubscribeAccount = null, remotes = null, footsteps = null;
   let visit = 0, pendingLive = null, unsubscribeRoster = null, shared = null;
+  // The floor: tables below R.LIVE_FROM are practice on this page against bots (`world.poker`, where the visitor is
+  // HERO); the rest are the live tables, `live` their connection (poker-net.js on the Worker's page, else the local
+  // encrypted-deck service's poker-live.js), null until there is one. A visitor holds one seat on the floor.
+  const HERO = "local-player";
+  let live = null;
+  const isLive = i => i >= R.LIVE_FROM;
+  const idleTables = Array.from({ length: 10 }, () => { const empty = { ...R.create().snapshot(), deadline: 0, dealAt: 0 }; return { snapshot: () => empty, version: 0, playing: false }; });
+  const tableAt = i => isLive(i) ? live ? live.tables[i] : idleTables[i] : session.tables[i];
+  const heroAt = i => isLive(i) ? live && live.identity || "" : HERO;
+  const seatIndex = i => tableAt(i).snapshot().seats.findIndex(s => s && s.id === heroAt(i));
   const NO_ACTORS = [];
   // The look each chair's model was built with, by table; the players seated at the dealer's tables.
   const looks = Array.from({ length: 10 }, () => new Array(9).fill(null)), seatedIds = new Set();
@@ -20,7 +30,7 @@
   const mayPick = c => !BL.net.mayDrive(c.name, BL.contributors.stateFor(c) === "working");
   const accountChanged = () => {
     if (!avatar) return;
-    if (session?.live?.account && session.live.account !== String(BL.net.state.me?.id)) session.live.disconnect(session.live.kind === "den" ? "You signed out, so you left the live tables. Poker bananas start fresh at your next sign-in." : "Account changed. Reload and sign in to the original account to recover this game.");
+    if (live?.account && live.account !== String(BL.net.state.me?.id)) live.disconnect(live.kind === "den" ? "You signed out, so you left the live tables. Poker bananas start fresh at your next sign-in." : "Account changed. Reload and sign in to the original account to recover this game.");
     const released = BL.net.state.released;
     const denied = mayPossess(avatar) || (released && released.name === avatar.traits.name ? "That Ooga is no longer yours to drive" : null);
     BL.net.state.released = null;
@@ -44,7 +54,7 @@
     pilot.possess(avatar); avatarHidden = false;
     remotes = BL.remotePlayers.create({ root, crew: people, visible: showWalker });
     mirror.body.track(avatar.root, avatar.traits.height * 2, Math.max(avatar.headOpen.verts.length, avatar.headClosed.verts.length));
-    if (seatTable >= 0 && !pendingStand) sit(session.tables[seatTable].snapshot().seats.findIndex(s => s?.id === HERO));
+    if (seatTable >= 0 && !pendingStand) sit(seatIndex(seatTable));
     scene.debug.crew = people; scene.debug.cavemen = people.cavemen;
     return true;
   };
@@ -100,7 +110,7 @@
       if (!p) continue;
       const tags = (s.hand && j === s.dealer ? " · D" : "") + (live && j === s.smallBlind ? " · SB" : "") + (live && j === s.bigBlind ? " · BB" : "");
       const state = p.folded ? "Folded" : p.inHand && !p.stack ? "All in" : p.out && !p.inHand ? "Sitting out" : live && p.inHand ? p.lastAction : "";
-      pl.me = p.id === HERO; pl.acting = live && j === s.turn; pl.faded = p.folded || p.out && !p.inHand;
+      pl.me = p.id === heroAt(selected); pl.acting = live && j === s.turn; pl.faded = p.folded || p.out && !p.inHand;
       pl.name = s.won && s.won[p.id] ? `${p.name} ★${number.format(s.won[p.id])}` : p.name; pl.info = number.format(p.stack) + tags + (state ? " · " + state : "");
     }
     potText = live && s.pot ? `Pot ${number.format(s.pot)}` : "";
@@ -108,7 +118,7 @@
   const drawPlates = (ctx, project) => {
     const s = snapshots[selected];
     if (!room || !s || panel.focused && !viewOn) return;
-    const t = PM.TABLES[selected], now = session.live && session.live.now ? session.live.now() : 0;
+    const t = PM.TABLES[selected], now = isLive(selected) && live && live.now ? live.now() : 0;
     ctx.save();
     ctx.textAlign = "center"; ctx.textBaseline = "alphabetic"; ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = "rgba(20, 14, 8, 0.85)";
     for (let j = 0; j < plates.length; j++) {
@@ -139,13 +149,13 @@
   const clamp = BL.math.clamp;
   const clampTarget = p => { p.x = clamp(p.x, -22, 22); p.z = clamp(p.z, -34, 34); p.y = clamp(p.y, 0.5, 7); };
   const clampCamera = p => { p.x = clamp(p.x, -23.5, 23.5); p.z = clamp(p.z, -35.7, 35.7); p.y = clamp(p.y, 0.8, 8.5); };
-  const activeTable = () => session.tables[selected];
+  const activeTable = () => tableAt(selected);
   const setTheme = id => {
     theme = Themes.get(id); room.setTheme(theme.id); panel.setTheme(theme.id);
     session.theme = theme.id;
     renderOpts.sky = theme.sky; renderOpts.ground = theme.ground; renderOpts.direct = theme.direct; renderOpts.ambientFloor = theme.ambient;
   };
-  const leaveFloor = () => { if (leaving) return; if (session.live && seatTable >= 0) { panel.notice(session.live.kind === "den" ? "Leave your seat before you go: it’s under Table options in the table view. Your bananas come with you." : "Stand between hands before leaving. You can walk the floor while connected."); return; } if (go("bifrost", null, true)) leaving = true; };
+  const leaveFloor = () => { if (leaving) return; if (seatTable >= 0 && isLive(seatTable)) { panel.notice(live && live.kind === "den" ? "Leave your seat before you go: it’s under Table options in the table view. Your bananas come with you." : "Stand between hands before leaving. You can walk the floor while connected."); return; } if (go("bifrost", null, true)) leaving = true; };
   // The live tables' leaderboard, on the Worker's site only: read when the floor opens and when the visitor comes back
   // to the lobby, at most every LEADERS_MS; an answer that lands after the visit ended is dropped.
   const LEADERS_MS = 30000;
@@ -183,8 +193,8 @@
   // Who sits in a chair. A practice bot, or an anonymous player of the encrypted-deck service, gets a look hashed from
   // its seat, never a real contributor's. At the dealer's tables a player is the Ooga they drive, as the island room
   // shows it (`net.remotes`), or a look hashed from their name until the room has them.
-  const seatLook = (p, j) => {
-    if (p.bot || session.live?.kind !== "den") return "Banana Bot " + j;
+  const seatLook = (p, i, j) => {
+    if (p.bot || !isLive(i) || live?.kind !== "den") return "Banana Bot " + j;
     const rec = BL.net.remotes.get(Number(p.id));
     return rec && rec.body || p.name;
   };
@@ -201,8 +211,8 @@
     const view = room.tables[i], kept = looks[i];
     for (let j = 0; j < PM.SEATS.length; j++) {
       const p = s.seats[j], slot = PM.SEATS[j];
-      const visibleActor = !!p && (p.bot || !!session.live && p.id !== HERO);
-      const look = visibleActor ? seatLook(p, j) : kept[j];
+      const visibleActor = !!p && (p.bot || isLive(i) && p.id !== heroAt(i));
+      const look = visibleActor ? seatLook(p, i, j) : kept[j];
       if (view.actors[j] && kept[j] !== look) { S.removeChild(view.root, view.actors[j].root); view.actors[j] = null; }
       if (visibleActor && !view.actors[j]) {
         const actor = BL.models.caveman(BL.contributors.traitsFor(look));
@@ -213,20 +223,20 @@
         if (actor.parts.legL) actor.parts.legL.rotation.x = -1.35;
         view.actors[j] = actor; kept[j] = look; S.addChild(view.root, actor.root);
       }
-      if (view.actors[j]) view.actors[j].root.visible = visibleActor && (p.bot || session.live?.kind !== "den" || inChair(p, i, j));
+      if (view.actors[j]) view.actors[j].root.visible = visibleActor && (p.bot || !isLive(i) || live?.kind !== "den" || inChair(p, i, j));
     }
   };
   // Players sitting in their chairs at the dealer's tables, by the island room's id: their walking Ooga is hidden and
   // the chair shows them; one who walks the floor is shown walking and the chair is empty. Checked every frame.
   const noteSeated = () => {
     seatedIds.clear();
-    if (session.live?.kind !== "den") return;
-    for (let i = 0; i < 10; i++) {
+    if (live?.kind !== "den") return;
+    for (let i = R.LIVE_FROM; i < 10; i++) {
       const s = snapshots[i];
       if (!s) continue;
       for (let j = 0; j < s.seats.length; j++) {
         const p = s.seats[j];
-        if (!p || p.id === HERO) continue;
+        if (!p || p.id === heroAt(i)) continue;
         const sitting = inChair(p, i, j), actor = room.tables[i].actors[j];
         if (sitting) seatedIds.add(Number(p.id));
         if (actor) actor.root.visible = sitting;
@@ -234,7 +244,7 @@
     }
   };
   const syncTable = i => {
-    const t = session.tables[i], view = room.tables[i], s = t.snapshot(i === seatTable && !pendingStand ? HERO : null);
+    const t = tableAt(i), view = room.tables[i], s = t.snapshot(i === seatTable && !pendingStand ? heroAt(i) : null);
     snapshots[i] = s; view.version = t.version; view.pulse = 0.7;
     if (s.result && completed[i] !== s.hand) { completed[i] = s.hand; nextHand[i] = 5; }
     let bets = 0;
@@ -256,75 +266,76 @@
     const gathered = s.phase !== "waiting" && s.phase !== "showdown" ? s.pot - bets : 0;
     view.pot.visible = gathered > 0;
     if (view.pot.visible) view.pot.geometry = handFor(gathered, POT_STEPS);
-    if (i === selected) { mySeat = s.seats.findIndex(p => p?.id === HERO); platesFor(s); }
+    if (i === selected) { mySeat = s.seats.findIndex(p => p?.id === heroAt(i)); platesFor(s); }
     seatActors(i, s);
     for (let j = 0; j < 5; j++) { view.board[j].visible = j < s.board.length && Number.isInteger(s.board[j]); if (view.board[j].visible) view.board[j].geometry = PM.card(s.board[j]); }
     view.button.visible = s.dealer >= 0;
     if (s.dealer >= 0) { const p = PM.SEATS[s.dealer]; view.button.position.x = p.x * 0.72; view.button.position.z = p.z * 0.65; view.button.position.y = 1.4; }
   };
   const updatePanel = () => {
-    panel.setLive(session.live ? { ...(session.live.fairness || { phase: "connecting" }), kind: session.live.kind, wallet: session.live.wallet, deck: session.live.deckCheck ? session.live.deckCheck(selected) : null, connection: session.live.connection, busy: session.live.busy } : null);
-    panel.update(selected, snapshots, seatTable >= 0 && (!pendingStand || session.live) ? HERO : null, session.live ? false : pendingStand, session.paused, session.autoDeal[selected]);
+    panel.setLive(live ? { ...(live.fairness || { phase: "connecting" }), kind: live.kind, wallet: live.wallet, deck: live.deckCheck ? live.deckCheck(selected) : null, connection: live.connection, busy: live.busy } : null);
+    const seatLive = seatTable >= 0 && isLive(seatTable), practice = !isLive(selected);
+    panel.update(selected, snapshots, seatTable >= 0 && (!pendingStand || seatLive) ? heroAt(seatTable) : null, seatLive ? false : pendingStand, practice && session.paused, practice && session.autoDeal[selected]);
     shownCountdown = -1;
   };
   const refresh = (force = false) => {
-    for (let i = 0; i < 10; i++) if (force || !snapshots[i] || room.tables[i].version !== session.tables[i].version) syncTable(i);
+    for (let i = 0; i < 10; i++) if (force || !snapshots[i] || room.tables[i].version !== tableAt(i).version) syncTable(i);
     noteSeated();
     updatePanel();
   };
   // A player's Ooga can reach the room after their seat reached the dealer's view: the chairs look again.
   const rosterChanged = () => {
-    if (!room || session.live?.kind !== "den") return;
-    for (let i = 0; i < 10; i++) if (snapshots[i]) seatActors(i, snapshots[i]);
+    if (!room || live?.kind !== "den") return;
+    for (let i = R.LIVE_FROM; i < 10; i++) if (snapshots[i]) seatActors(i, snapshots[i]);
   };
   const select = i => {
     if (!Number.isInteger(i) || i < 0 || i >= 10) return;
     if (seatTable >= 0 && i !== seatTable) { panel.notice("Stand from your current table before switching tables."); return; }
-    if (session.live && i !== selected) { try { session.live.action("watch", i); } catch (e) { panel.notice(e.message); return; } }
+    if (isLive(i) && live && i !== selected) { try { live.action("watch", i); } catch (e) { panel.notice(e.message); return; } }
     selected = i;
-    if (snapshots[i]) { mySeat = snapshots[i].seats.findIndex(p => p?.id === HERO); platesFor(snapshots[i]); }
-    if (seatTable >= 0 && !pendingStand) sit(session.tables[i].snapshot().seats.findIndex(s => s?.id === HERO));
+    if (snapshots[i]) { mySeat = snapshots[i].seats.findIndex(p => p?.id === heroAt(i)); platesFor(snapshots[i]); }
+    if (seatTable >= 0 && !pendingStand) sit(seatIndex(i));
     updatePanel(); setView(true);
   };
   // The page the Worker serves plays its dealer's tables (poker-net.js) under the GitHub sign-in; anywhere else the
-  // live tables are the local encrypted-deck service's (poker-live.js).
+  // live tables are the local encrypted-deck service's (poker-live.js). Either way they take tables R.LIVE_FROM up,
+  // beside the practice ones, and a live seat kept through a reload is sat back down in.
+  const liveSeat = c => { for (let i = R.LIVE_FROM; i < 10; i++) if (c.tables[i].snapshot().seats.some(s => s?.id === c.identity)) return i; return -1; };
   const connectLive = async (retry = false) => {
-    if (connecting || session.live && !retry) return;
-    if (!session.live && seatTable >= 0) throw new Error("Leave your practice seat before connecting");
-    if (retry && session.live?.connection !== "failed") return;
+    if (connecting || live && !retry) return;
+    if (retry && live?.connection !== "failed") return;
     const site = BL.net.state.backend;
     if (site && !BL.net.state.me) { BL.net.login("/?scene=poker"); return; }
-    if (retry) session.live.dispose();
+    if (retry) { live.dispose(); live = null; }
     const visitId = visit;
     connecting = true;
     panel.setConnecting(true); updatePanel();
-    let restoring = true;
-    const seated = live => live.tables.findIndex(t => t.snapshot().seats.some(s => s?.id === live.identity));
-    const live = (site ? BL.pokerNet : BL.pokerLive).create(() => {
-      if (!panel || session?.live !== live) return;
-      HERO = live.identity || "connecting";
-      if (restoring && (live.connected || live.connection === "live")) { selected = live.table; restoring = false; if (panel.focused) BL.net.setPokerVoice(selected); }
-      const previous = seatTable;
-      seatTable = seated(live);
-      if (seatTable >= 0 && previous < 0) { selected = seatTable; pendingStand = false; sit(live.tables[seatTable].snapshot().seats.findIndex(s => s?.id === HERO)); setView(true); }
-      if (previous >= 0 && seatTable < 0) { pendingStand = false; placeInAisle(); }
-      refresh(live.kind !== "den" || seatTable !== previous);
-    }, message => { if (panel && session?.live === live) panel.notice(message); });
-    pendingLive = live;
+    const next = (site ? BL.pokerNet : BL.pokerLive).create(() => {
+      if (!panel || live !== next) return;
+      const at = liveSeat(next), previous = seatTable;
+      if (at >= 0 && at !== previous && (previous < 0 || isLive(previous))) { seatTable = selected = at; pendingStand = false; sit(seatIndex(at)); setView(true); }
+      else if (at < 0 && previous >= 0 && isLive(previous)) { seatTable = -1; pendingStand = false; placeInAisle(); }
+      refresh(next.kind !== "den" || seatTable !== previous);
+    }, message => { if (panel && live === next) panel.notice(message); });
+    pendingLive = next;
     try {
-      await live.connect(selected);
-      if (visitId !== visit || !panel || leaving) { live.dispose(); return; }
-      if (seatTable >= 0) placeInAisle();
-      session = { tables: live.tables, live, selected, paused: false, pendingStand: false, autoDeal: new Array(10).fill(false), theme: theme.id };
-      HERO = live.identity || "connecting"; seatTable = -1; pendingStand = false; snapshots.fill(null);
-      // The dealer keeps a seat through a reload: sit back down in it.
-      seatTable = seated(live);
-      if (seatTable >= 0) { selected = seatTable; live.action("watch", selected); sit(live.tables[seatTable].snapshot().seats.findIndex(s => s?.id === HERO)); }
+      await next.connect(isLive(selected) ? selected : R.LIVE_FROM);
+      if (visitId !== visit || !panel || leaving) { next.dispose(); return; }
+      live = next;
+      const at = liveSeat(next);
+      if (at >= 0 && seatTable < 0) { seatTable = selected = at; pendingStand = false; next.action("watch", at); sit(seatIndex(at)); }
+      for (let i = R.LIVE_FROM; i < 10; i++) snapshots[i] = null;
       refresh(true);
-      if (seatTable >= 0) setView(true);
-      if (scene.debug) scene.debug.poker.session = session;
-    } catch (error) { live.dispose(); if (visitId === visit) throw error; }
+      if (seatTable >= 0 && isLive(seatTable)) setView(true);
+    } catch (error) { next.dispose(); if (visitId === visit) throw error; }
     finally { if (visitId === visit) { pendingLive = null; connecting = false; if (panel) { panel.setConnecting(false); updatePanel(); } } }
+  };
+  // "Play live": connect when needed, then open a live table, the one selected or the first with a free seat.
+  const goLive = () => {
+    const open = i => tableAt(i).snapshot().seats.some(p => !p);
+    const pick = () => { let i = isLive(selected) ? selected : -1; for (let k = R.LIVE_FROM; i < 0 && k < 10; k++) if (open(k)) i = k; select(i >= 0 ? i : R.LIVE_FROM); };
+    if (live) { pick(); return; }
+    connectLive().then(() => { if (live && panel) pick(); }).catch(error => panel?.notice(error.message));
   };
   const addBots = (table, count) => {
     const s = table.snapshot(); let added = 0;
@@ -335,24 +346,24 @@
     try {
       // A cosmetic switch must not reset turn timing, raise input or hand state.
       if (name === "theme") { setTheme(value); Themes.save(theme.id); return; }
-      if (name === "connect") { connectLive().catch(error => panel?.notice(error.message)); return; }
+      if (name === "connect") { goLive(); return; }
       if (name === "reconnect") { connectLive(true).catch(error => panel?.notice(error.message)); return; }
       if (name === "return") { select(seatTable >= 0 ? seatTable : selected); return; }
       if (name === "walk") { if (seatTable >= 0) placeInAisle(); setView(false); return; }
       if (name === "view") { seatView = !seatView; saveView(); panel.setView(seatView); return; }
-      if (session.live) {
-        if (name === "practice") {
-          if (seatTable >= 0) throw new Error("Stand before returning to practice");
-          session.live.dispose(); session = world.poker; HERO = "local-player"; pendingStand = false; selected = session.selected || 0;
-          seatTable = session.tables.findIndex(t => t.snapshot().seats.some(s => s?.id === HERO));
-          snapshots.fill(null); refresh(true); setView(false); if (scene.debug) scene.debug.poker.session = session; return;
-        }
-        if (name === "exit") { leaveFloor(); return; }
+      if (name === "exit") { leaveFloor(); return; }
+      if (name === "signin") { BL.net.login("/?scene=poker"); return; }
+      // Practice from a live table goes to a practice table.
+      if (name === "quick" && isLive(selected)) { if (seatTable >= 0) throw new Error("You already have a seat"); selected = 0; table = activeTable(); }
+      const taking = name === "seat" || name === "join" || name === "quick";
+      if (taking && seatTable >= 0 && isLive(seatTable) !== isLive(selected)) throw new Error(`Leave your ${isLive(seatTable) ? "live" : "practice"} seat first`);
+      if (isLive(selected)) {
+        if (!live) throw new Error(BL.net.state.backend && !BL.net.state.me ? "Sign in with GitHub to play at the live tables." : connecting ? "Connecting to the live tables…" : "Press Play live to join the live tables.");
         // The dealer's tables: its own messages, the player named by the session.
-        if (session.live.kind === "den") { session.live.action(name, value, expectedVersion); return; }
-        if (name === "verify" || name === "export" || name === "verify-file") { session.live.action(name === "verify-file" ? "verify" : name, name === "verify-file" ? value : null); return; }
+        if (live.kind === "den") { live.action(name, value, expectedVersion); return; }
+        if (name === "verify" || name === "export" || name === "verify-file") { live.action(name === "verify-file" ? "verify" : name, name === "verify-file" ? value : null); return; }
         const nickname = document.querySelector('[data-poker="nickname"]').value.trim() || "Ooga";
-        session.live.action(name, name === "seat" ? { name: nickname, seat: value } : name === "join" ? { name: nickname } : value, expectedVersion); return;
+        live.action(name, name === "seat" ? { name: nickname, seat: value } : name === "join" ? { name: nickname } : value, expectedVersion); return;
       }
       if (name === "fold" || name === "call" || name === "raise") {
         if (session.paused || pendingStand) throw new Error("Resume your game before acting");
@@ -362,8 +373,8 @@
         if (pendingStand) throw new Error("Your previous seat releases after the hand");
         if (seatTable < 0) {
           const available = t => !t.playing && t.snapshot().seats.some(s => !s);
-          if (!available(table)) selected = session.tables.findIndex(available);
-          if (selected < 0) { selected = 0; throw new Error("Every table is playing. Watch a table and join between hands."); }
+          if (!available(table)) selected = session.tables.findIndex((t, i) => !isLive(i) && available(t));
+          if (selected < 0) { selected = 0; throw new Error("Every practice table is playing. Watch a table and join between hands."); }
           table = activeTable(); table.join(HERO, "You"); seatTable = selected;
         }
         session.paused = false;
@@ -398,14 +409,14 @@
   };
   const enter = ctx => {
     visit++;
-    game = ctx.game; world = ctx.world; go = ctx.go; leaving = false; timer = 0; HERO = "local-player"; connecting = false;
+    game = ctx.game; world = ctx.world; go = ctx.go; leaving = false; timer = 0; connecting = false; live = null;
     if (ctx.from === "bifrost") document.querySelector('[data-intro="poker"]').hidden = true;
     session = world.poker || (world.poker = { tables: Array.from({ length: 10 }, () => R.create()), selected: 0, pendingStand: false });
     if (!session.autoDeal) session.autoDeal = new Array(10).fill(true);
     theme = Themes.get(session.theme || Themes.load());
     session.paused = !!session.paused; nextHand.fill(5); completed.fill(0); shownCountdown = -1;
     selected = session.selected; pendingStand = session.pendingStand;
-    seatTable = session.tables.findIndex(t => t.snapshot().seats.some(s => s?.id === HERO));
+    seatTable = session.tables.findIndex((t, i) => !isLive(i) && t.snapshot().seats.some(s => s?.id === HERO));
     if (seatTable >= 0) selected = seatTable;
     for (const l of looks) l.fill(null);
     seatedIds.clear();
@@ -468,8 +479,9 @@
     leadersAt = -Infinity;
     panel = BL.pokerHud.create(action, select); panel.setView(seatView); setTheme(theme.id); refresh(); setView(seatTable >= 0 && !pendingStand);
     scene.root = root; scene.camera = camera; scene.input = input;
-    scene.debug = { camera, pilot, hud, crew: people, cavemen: people.cavemen, controls: pilot.controls, poker: { session, room, action, select, snapshots, eye: EYE } };
-    if (new URLSearchParams(location.search).get("pokerLive") === "1") action("connect");
+    scene.debug = { camera, pilot, hud, crew: people, cavemen: people.cavemen, controls: pilot.controls, poker: { session, room, action, select, snapshots, eye: EYE, get live() { return live; } } };
+    // Signed in on the Worker's page, the live tables join the floor at once; the local service's on request.
+    if (BL.net.state.backend && BL.net.state.me || new URLSearchParams(location.search).get("pokerLive") === "1") connectLive().catch(error => panel?.notice(error.message));
   };
   const update = (dt, elapsed) => {
     pilot.readInput(dt);
@@ -509,14 +521,14 @@
       lights[o] = 0; lights[o + 1] = 6.15; lights[o + 2] = (i - 1) * 24; lights[o + 3] = 13;
       lights[o + 4] = theme.roomLight[0]; lights[o + 5] = theme.roomLight[1]; lights[o + 6] = theme.roomLight[2];
     }
-    if (!session.live && !session.paused) {
+    if (!session.paused) {
       timer += dt;
-      for (let i = 0; i < 10; i++) if (session.autoDeal[i] && snapshots[i].result) nextHand[i] = Math.max(0, nextHand[i] - dt);
+      for (let i = 0; i < R.LIVE_FROM; i++) if (session.autoDeal[i] && snapshots[i].result) nextHand[i] = Math.max(0, nextHand[i] - dt);
     }
-    if (!session.live && timer >= 0.8) {
+    if (timer >= 0.8) {
       timer %= 0.8;
       let changed = false;
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < R.LIVE_FROM; i++) {
         const t = session.tables[i], s = snapshots[i], player = s.seats[s.turn];
         try {
           if (s.result && session.autoDeal[i] && nextHand[i] === 0) {
@@ -536,13 +548,13 @@
       }
       if (changed) updatePanel();
     }
-    if (session.live?.kind === "den") {
+    if (isLive(selected) && live?.kind === "den") {
       // The dealer's clocks: the turn's while a hand plays, the next deal's between hands.
-      const s = snapshots[selected], at = s.deadline || s.dealAt, seconds = at ? Math.max(0, Math.ceil((at - session.live.now()) / 1000)) : -1;
+      const s = snapshots[selected], at = s.deadline || s.dealAt, seconds = at ? Math.max(0, Math.ceil((at - live.now()) / 1000)) : -1;
       if (shownCountdown !== seconds) { shownCountdown = seconds; panel.countdown(seconds, false, s.deadline ? "turn" : "deal"); }
     } else {
-      const seconds = session.live ? session.live.deadline === null ? -1 : Math.max(0, Math.ceil((session.live.deadline - BL.net.serverNow()) / 1000)) : Math.ceil(nextHand[selected]);
-      if (shownCountdown !== seconds) { shownCountdown = seconds; panel.countdown(seconds, session.autoDeal[selected]); }
+      const seconds = isLive(selected) ? !live || live.deadline === null ? -1 : Math.max(0, Math.ceil((live.deadline - BL.net.serverNow()) / 1000)) : Math.ceil(nextHand[selected]);
+      if (shownCountdown !== seconds) { shownCountdown = seconds; panel.countdown(seconds, !isLive(selected) && session.autoDeal[selected]); }
     }
     S.stepTweens(dt); fx.update(dt, elapsed);
   };
@@ -551,7 +563,7 @@
   const leave = () => {
     visit++; pendingLive?.dispose(); pendingLive = null;
     session.selected = selected; session.pendingStand = pendingStand;
-    if (session.live) session.live.dispose();
+    if (live) { live.dispose(); live = null; }
     BL.net.setPokerVoice(null);
     world.pilotDetached = !pilot.player;
     world.pilot = pilot.player ? pilot.player.traits.name : null;

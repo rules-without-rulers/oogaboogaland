@@ -13441,14 +13441,14 @@ scene("flap", { steps: [carnivalPlay("flap", 0.5), trip("flap")] });
 scene("breaker", { steps: [carnivalPlay("breaker", 0.5), trip("breaker")] });
 scene("dash", { steps: [carnivalPlay("dash", 0.5), trip("dash")] });
 scene("stacker", { steps: [carnivalPlay("stacker", 0.5), trip("stacker")] });
-// The previous play check leaves table ten running. Freeze local deals while comparing
+// The previous play check leaves the sixth (last practice) table running. Freeze local deals while comparing
 // visits: different community cards legitimately have different SVG element counts.
 const pokerTrip = (() => {
   const check = trip("poker");
   return { ...check, run: async b => {
     const before = await b.evaluate(`(() => {
       const P = BL.scenes.poker.debug.poker;
-      if (P.session.live) throw new Error("Poker round trip needs a local session");
+      if (P.live) throw new Error("Poker round trip needs a local session");
       const paused = P.session.paused;
       if (!paused) P.action("pause");
       if (!P.session.paused) throw new Error("Poker round trip could not pause the local session");
@@ -13458,13 +13458,13 @@ const pokerTrip = (() => {
       await check.run(b);
       const after = await b.evaluate(`(() => {
         const P = BL.scenes.poker.debug.poker;
-        return { paused: P.session.paused, local: !P.session.live, versions: P.session.tables.map(t => t.version), title: document.querySelector('[data-poker="title"]').textContent };
+        return { paused: P.session.paused, local: !P.live, versions: P.session.tables.map(t => t.version), title: document.querySelector('[data-poker="title"]').textContent };
       })()`);
       record("poker round trip: both visits compare the same paused local hand and table", after.local && after.paused && after.title === before.title && JSON.stringify(after.versions) === JSON.stringify(before.versions), JSON.stringify({ before, after }));
     } finally {
       await b.evaluate(`(() => {
         const P = BL.scenes.poker.debug?.poker;
-        if (P && !P.session.live && P.session.paused !== ${before.paused}) P.action("pause");
+        if (P && !P.live && P.session.paused !== ${before.paused}) P.action("pause");
       })()`);
     }
   } };
@@ -13489,10 +13489,15 @@ scene("poker", { query: "character=portlandhodl", steps: [{ name: "poker floor a
     const t = P.session.tables[0], privateCards = t.snapshot().seats.every(s => s.cards.every(c => c === null));
     let guard = 0; while (t.playing && guard++ < 500) { if (t.snapshot("local-player").legal) click("call"); B.advance(0.81, 1 / 30); }
     const done = t.snapshot(), total = done.seats.reduce((n, s) => n + s.stack, 0), shown = document.querySelector('[data-poker="street"]').textContent;
-    click("stand"); P.select(9); click("bots"); click("start"); B.advance(1, 1 / 30);
-    return { count, seats, dealers, privateCards, modeHeld, phase: done.phase, total, shown, tableTen: P.session.tables[9].snapshot().hand, standing: !document.body.hasAttribute("data-poker-seated") };
+    click("stand"); const last = BL.pokerRules.LIVE_FROM - 1;
+    P.select(9);
+    const by = n => document.querySelector('[data-poker="' + n + '"]');
+    const liveTen = { badge: by("mode-badge").textContent, join: by("join").dataset.pokerAction, bots: by("bots").hidden, tag: document.querySelector('[data-watch="9"] .poker-row-tag').textContent };
+    P.select(last); click("bots"); click("start"); B.advance(1, 1 / 30);
+    return { count, seats, dealers, privateCards, modeHeld, phase: done.phase, total, shown, lastPractice: P.session.tables[last].snapshot().hand, liveTen, standing: !document.body.hasAttribute("data-poker-seated") };
   })()`);
-  record("poker local play: ten suited dealers, 90 chairs, nine-player settlement, table ten playable and private snapshots", r.count === 10 && r.seats && r.dealers && r.privateCards && r.phase === "showdown" && r.total === 9000 && r.shown === "Hand complete" && r.tableTen === 1 && r.standing, JSON.stringify(r));
+  record("poker local play: ten suited dealers, 90 chairs, nine-player settlement, the last practice table plays, tables 7 to 10 are live, and private snapshots", r.count === 10 && r.seats && r.dealers && r.privateCards && r.phase === "showdown" && r.total === 9000 && r.shown === "Hand complete" && r.lastPractice === 1
+    && r.liveTen.badge === "LIVE TABLE" && r.liveTen.join === "connect" && r.liveTen.bots && r.liveTen.tag === "LIVE" && r.standing, JSON.stringify(r));
   record("poker modes: table focus keeps X and the portrait from changing the seated Ooga's mode", r.modeHeld);
   if (process.env.POKER_SHOTS) {
     await b.evaluate(`(() => { const P = BL.scenes.poker.debug.pilot; P.release(true); P.goPreset("entrance"); __ooga.advance(2); })()`);

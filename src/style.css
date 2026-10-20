@@ -8035,6 +8035,8 @@ body[data-active-scene="poker"] .world-clock { display: none; }
 .poker-table-row strong { font: 500 21px Georgia, serif; }
 .poker-table-row > span { align-self: center; font-size: 10px; color: var(--pk-muted); }
 .poker-table-row small { grid-column: 1 / -1; font-size: 10px; color: var(--pk-muted); min-height: 14px; }
+.poker-row-tag { grid-column: 1 / -1; font: 700 8.5px/1 ui-monospace, monospace; font-style: normal; letter-spacing: 0.08em; color: var(--pk-muted); }
+.poker-table-row.is-live .poker-row-tag { color: var(--pk-bright); }
 .poker-seat-dots { display: flex; grid-column: 1 / -1; gap: 4px; padding-top: 3px; }
 .poker-seat-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--pk-soft); border: 1px solid var(--pk-line); }
 .poker-seat-dots i.occupied { background: var(--pk-accent); border-color: var(--pk-accent); }

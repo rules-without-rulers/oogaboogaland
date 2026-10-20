@@ -127,13 +127,13 @@ test("poker den: two players sit, the dealer deals by itself and each page sees 
   const a = await h.connect(d, 1, "ana"), b = await h.connect(d, 2, "bo"), watcher = await h.connect(d, 3, "cy");
   assert.equal(a.sent[0].t, "welcome");
   assert.equal(a.sent[0].wallet.bananas, R.BUY_IN, "a newcomer starts with BUY_IN bananas");
-  await h.say(d, a, { t: "sit", table: 0, seat: 2 });
-  await h.say(d, b, { t: "sit", table: 0, seat: 5 });
+  await h.say(d, a, { t: "sit", table: 6, seat: 2 });
+  await h.say(d, b, { t: "sit", table: 6, seat: 5 });
   assert.equal(lastOf(a, "wallet").bananas, 0, "sitting takes every banana to the table");
-  assert.equal(lastTable(a, 0).phase, "waiting");
-  assert.ok(lastTable(a, 0).dealAt > h.clock.now, "the table says when it deals");
+  assert.equal(lastTable(a, 6).phase, "waiting");
+  assert.ok(lastTable(a, 6).dealAt > h.clock.now, "the table says when it deals");
   await h.wait(d, FIRST_DEAL_MS);
-  const ownA = lastTable(a, 0), ownB = lastTable(b, 0), open = lastTable(watcher, 0);
+  const ownA = lastTable(a, 6), ownB = lastTable(b, 6), open = lastTable(watcher, 6);
   assert.equal(ownA.phase, "preflop");
   assert.ok(ownA.seats[2].cards.every(Number.isInteger) && ownA.seats[5].cards.every((c) => c === null));
   assert.ok(ownB.seats[5].cards.every(Number.isInteger) && ownB.seats[2].cards.every((c) => c === null));
@@ -185,11 +185,11 @@ test("poker den: up to 300 hands at a four-player table never show a page a card
   const ids = [11, 12, 13, 14], socks = new Map();
   for (const id of ids) socks.set(id, await h.connect(d, id));
   const watcher = await h.connect(d, 99, "watcher");
-  for (const [n, id] of ids.entries()) await h.say(d, socks.get(id), { t: "sit", table: 4, seat: n * 2 });
+  for (const [n, id] of ids.entries()) await h.say(d, socks.get(id), { t: "sit", table: 6, seat: n * 2 });
   const total = bananas(h, d, ids) + onTables(d);
   let hands = 0;
   for (let step = 0; step < 6000 && hands < 300; step++) {
-    const t = d.tables[4].rules, s = t.snapshot();
+    const t = d.tables[6].rules, s = t.snapshot();
     if (!t.playing) {
       for (const id of ids) {
         const p = s.seats.find((x) => x && x.id === String(id));
@@ -202,7 +202,7 @@ test("poker den: up to 300 hands at a four-player table never show a page a card
     }
     // A human's pace: the den lets a page make ACT_HZ moves a second.
     await h.wait(d, 400);
-    const id = Number(s.seats[s.turn].id), ws = socks.get(id), view = lastTable(ws, 4), l = view.legal;
+    const id = Number(s.seats[s.turn].id), ws = socks.get(id), view = lastTable(ws, 6), l = view.legal;
     const roll = R.randomInt(10);
     if (roll === 0) await h.say(d, ws, { t: "act", a: "fold", v: view.version });
     else if (roll < 3 && l.canRaise) await h.say(d, ws, { t: "act", a: "raise", n: Math.min(l.max, l.min + R.randomInt(3) * R.BIG), v: view.version });
@@ -218,67 +218,67 @@ const ready = (rules) => rules.snapshot().seats.filter((s) => s && s.stack > 0 &
 test("poker den: a turn that runs out checks or folds; two in a row sit the player out until they are back", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), b = await h.connect(d, 2);
-  await h.say(d, a, { t: "sit", table: 1, seat: 0 });
-  await h.say(d, b, { t: "sit", table: 1, seat: 1 });
+  await h.say(d, a, { t: "sit", table: 7, seat: 0 });
+  await h.say(d, b, { t: "sit", table: 7, seat: 1 });
   await h.wait(d, FIRST_DEAL_MS);
-  const before = d.tables[1].rules.snapshot();
+  const before = d.tables[7].rules.snapshot();
   const sleeper = before.seats[before.turn].id, sleeperWs = sleeper === "1" ? a : b, other = sleeper === "1" ? b : a;
   await h.wait(d, TURN_MS - 1);
-  assert.equal(d.tables[1].rules.snapshot().turn, before.turn, "the clock has not run out yet");
+  assert.equal(d.tables[7].rules.snapshot().turn, before.turn, "the clock has not run out yet");
   await h.wait(d, 1);
-  const after = d.tables[1].rules.snapshot();
+  const after = d.tables[7].rules.snapshot();
   assert.notEqual(after.version, before.version, "the dealer acted for the sleeper");
   assert.equal(after.phase, "showdown", "heads-up preflop, the button facing the blind folds");
   // The next hand: the sleeper misses again and is sat out.
-  for (let i = 0; i < 6 && !d.tables[1].rules.snapshot().seats.find((s) => s?.id === sleeper).out; i++) {
+  for (let i = 0; i < 6 && !d.tables[7].rules.snapshot().seats.find((s) => s?.id === sleeper).out; i++) {
     await h.wait(d, DEAL_GAP_MS);
-    const s = d.tables[1].rules.snapshot();
-    if (!d.tables[1].rules.playing) continue;
+    const s = d.tables[7].rules.snapshot();
+    if (!d.tables[7].rules.playing) continue;
     if (s.seats[s.turn].id === sleeper) await h.wait(d, TURN_MS);
-    else { const v = lastTable(other, 1); await h.say(d, other, { t: "act", a: v.legal.check ? "check" : "call", v: v.version }); }
+    else { const v = lastTable(other, 7); await h.say(d, other, { t: "act", a: v.legal.check ? "check" : "call", v: v.version }); }
   }
-  assert.ok(d.tables[1].rules.snapshot().seats.find((s) => s?.id === sleeper).out, `sat out after ${MISSED_OUT} misses`);
+  assert.ok(d.tables[7].rules.snapshot().seats.find((s) => s?.id === sleeper).out, `sat out after ${MISSED_OUT} misses`);
   assert.ok(lastOf(sleeperWs, "notice").text.includes("sat you out"));
   // The hand it was sat out in plays on: the sleeper's clock runs, the other player acts.
-  while (d.tables[1].rules.playing) {
-    const s = d.tables[1].rules.snapshot();
+  while (d.tables[7].rules.playing) {
+    const s = d.tables[7].rules.snapshot();
     if (s.seats[s.turn].id === sleeper) await h.wait(d, TURN_MS);
-    else { const v = lastTable(other, 1); await h.say(d, other, { t: "act", a: v.legal.check ? "check" : "call", v: v.version }); }
+    else { const v = lastTable(other, 7); await h.say(d, other, { t: "act", a: v.legal.check ? "check" : "call", v: v.version }); }
   }
   await h.wait(d, DEAL_GAP_MS);
-  assert.ok(!d.tables[1].rules.playing, "one player ready deals nothing");
+  assert.ok(!d.tables[7].rules.playing, "one player ready deals nothing");
   await h.say(d, sleeperWs, { t: "out", on: false });
   await h.wait(d, FIRST_DEAL_MS);
-  assert.ok(d.tables[1].rules.playing, "back in, the table deals again");
+  assert.ok(d.tables[7].rules.playing, "back in, the table deals again");
 });
 
 test("poker den: a stale action is refused; a raise to an illegal size is refused with the rules' reason", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), b = await h.connect(d, 2);
-  await h.say(d, a, { t: "sit", table: 2, seat: 0 });
-  await h.say(d, b, { t: "sit", table: 2, seat: 1 });
+  await h.say(d, a, { t: "sit", table: 8, seat: 0 });
+  await h.say(d, b, { t: "sit", table: 8, seat: 1 });
   await h.wait(d, FIRST_DEAL_MS);
-  const s = d.tables[2].rules.snapshot(), ws = s.seats[s.turn].id === "1" ? a : b, other = ws === a ? b : a;
+  const s = d.tables[8].rules.snapshot(), ws = s.seats[s.turn].id === "1" ? a : b, other = ws === a ? b : a;
   await h.say(d, ws, { t: "act", a: "call", v: 0 });
   assert.match(lastOf(ws, "error").text, /moved on/);
-  await h.say(d, ws, { t: "act", a: "raise", n: 11, v: lastTable(ws, 2).version });
+  await h.say(d, ws, { t: "act", a: "raise", n: 11, v: lastTable(ws, 8).version });
   assert.match(lastOf(ws, "error").text, /Invalid raise/);
-  await h.say(d, other, { t: "act", a: "check", v: lastTable(other, 2).version });
+  await h.say(d, other, { t: "act", a: "check", v: lastTable(other, 8).version });
   assert.match(lastOf(other, "error").text, /Wait for your turn/);
 });
 
 test("poker den: a closed page sits out at once, its turns run fast, and it is stood up with its bananas later", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), b = await h.connect(d, 2), c = await h.connect(d, 3);
-  for (const [n, ws] of [a, b, c].entries()) await h.say(d, ws, { t: "sit", table: 3, seat: n });
+  for (const [n, ws] of [a, b, c].entries()) await h.say(d, ws, { t: "sit", table: 9, seat: n });
   await h.wait(d, FIRST_DEAL_MS);
-  const s = d.tables[3].rules.snapshot(), goneId = s.seats[s.turn].id, goneWs = [a, b, c][Number(goneId) - 1];
+  const s = d.tables[9].rules.snapshot(), goneId = s.seats[s.turn].id, goneWs = [a, b, c][Number(goneId) - 1];
   h.hangUp(d, goneWs);
-  assert.ok(d.tables[3].rules.snapshot().seats.find((p) => p?.id === goneId).out, "sat out of the next deals");
+  assert.ok(d.tables[9].rules.snapshot().seats.find((p) => p?.id === goneId).out, "sat out of the next deals");
   await h.wait(d, AWAY_TURN_MS);
-  assert.notEqual(d.tables[3].rules.snapshot().turn, s.turn, "its turn ran on the short clock");
-  const stack = () => d.tables[3].rules.snapshot().seats.find((p) => p?.id === goneId)?.stack;
-  while (d.tables[3].rules.playing) await h.wait(d, TURN_MS);
+  assert.notEqual(d.tables[9].rules.snapshot().turn, s.turn, "its turn ran on the short clock");
+  const stack = () => d.tables[9].rules.snapshot().seats.find((p) => p?.id === goneId)?.stack;
+  while (d.tables[9].rules.playing) await h.wait(d, TURN_MS);
   const kept = stack();
   await h.wait(d, AWAY_STAND_MS);
   assert.equal(stack(), undefined, "stood up after AWAY_STAND_MS");
@@ -288,16 +288,16 @@ test("poker den: a closed page sits out at once, its turns run fast, and it is s
 test("poker den: a page that comes back in time is dealt in again; a newer tab takes over the same seat", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), b = await h.connect(d, 2);
-  await h.say(d, a, { t: "sit", table: 5, seat: 3 });
-  await h.say(d, b, { t: "sit", table: 5, seat: 4 });
+  await h.say(d, a, { t: "sit", table: 7, seat: 3 });
+  await h.say(d, b, { t: "sit", table: 7, seat: 4 });
   h.hangUp(d, a);
-  assert.ok(d.tables[5].rules.snapshot().seats[3].out);
+  assert.ok(d.tables[7].rules.snapshot().seats[3].out);
   const again = await h.connect(d, 1);
-  assert.ok(!d.tables[5].rules.snapshot().seats[3].out, "back, and dealt in");
-  assert.ok(again.sent[0].tables[5].seats[3].id === "1");
+  assert.ok(!d.tables[7].rules.snapshot().seats[3].out, "back, and dealt in");
+  assert.ok(again.sent[0].tables[7].seats[3].id === "1");
   const tab = await h.connect(d, 1);
   assert.equal(lastOf(again, "kick").reason, "replaced");
-  assert.equal(d.tables[5].rules.snapshot().seats[3].id, "1", "the seat stays with the account");
+  assert.equal(d.tables[7].rules.snapshot().seats[3].id, "1", "the seat stays with the account");
   assert.ok(tab.sent[0].t === "welcome");
 });
 
@@ -324,19 +324,19 @@ test("poker den: a hand survives the den restarting mid-hand, cards and chips un
 test("poker den: after a restart, a seat whose page never came back is not dealt in and stands up later", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), b = await h.connect(d, 2), c = await h.connect(d, 3);
-  for (const [n, ws] of [a, b, c].entries()) await h.say(d, ws, { t: "sit", table: 4, seat: n });
+  for (const [n, ws] of [a, b, c].entries()) await h.say(d, ws, { t: "sit", table: 6, seat: n });
   // A deploy: every socket drops without the den hearing a close; two pages come back, one never does.
   for (const ws of [a, b, c]) ws.gone = true;
   const woken = await h.den();
   assert.equal(woken.players.size, 0);
   await h.connect(woken, 1); await h.connect(woken, 2);
   await h.wait(woken, FIRST_DEAL_MS);
-  const s = woken.tables[4].rules.snapshot();
-  assert.ok(woken.tables[4].rules.playing, "the two who came back are dealt");
+  const s = woken.tables[6].rules.snapshot();
+  assert.ok(woken.tables[6].rules.playing, "the two who came back are dealt");
   assert.ok(s.seats[2].out && !s.seats[2].inHand, "the one who did not is sat out");
-  while (woken.tables[4].rules.playing) await h.wait(woken, TURN_MS);
+  while (woken.tables[6].rules.playing) await h.wait(woken, TURN_MS);
   await h.wait(woken, AWAY_STAND_MS);
-  assert.equal(woken.tables[4].rules.snapshot().seats[2], null, "and stood up, its bananas kept");
+  assert.equal(woken.tables[6].rules.snapshot().seats[2], null, "and stood up, its bananas kept");
   assert.equal(h.store.get("w:3").b, R.BUY_IN);
 });
 
@@ -439,13 +439,24 @@ test("poker den: a hand's winner is counted once, shown on its plate and written
   assert.equal(won.get(Number(winner)), before[winner] + 1);
 });
 
+// Rule: the floor's first tables are practice on the page; the dealer seats nobody there.
+test("poker den: a seat at a practice table is refused", async () => {
+  const h = host(), d = await h.den();
+  const a = await h.connect(d, 1);
+  await h.say(d, a, { t: "sit", table: R.LIVE_FROM - 1, seat: 0 });
+  assert.match(lastOf(a, "error").text, /practice tables/);
+  assert.equal(d.seatOf(1), null);
+  await h.say(d, a, { t: "sit", table: R.LIVE_FROM, seat: 0 });
+  assert.equal(d.seatOf(1).table, R.LIVE_FROM);
+});
+
 test("poker den: nobody can act, deal or stand for someone else, and one account holds one seat", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), b = await h.connect(d, 2), c = await h.connect(d, 3);
-  await h.say(d, a, { t: "sit", table: 0, seat: 0 });
-  await h.say(d, a, { t: "sit", table: 1, seat: 0 });
+  await h.say(d, a, { t: "sit", table: 6, seat: 0 });
+  await h.say(d, a, { t: "sit", table: 7, seat: 0 });
   assert.match(lastOf(a, "error").text, /already have a seat/);
-  await h.say(d, b, { t: "sit", table: 0, seat: 0 });
+  await h.say(d, b, { t: "sit", table: 6, seat: 0 });
   assert.match(lastOf(b, "error").text, /No free seat/);
   await h.say(d, c, { t: "deal" });
   assert.match(lastOf(c, "error").text, /Take a seat/);
@@ -457,28 +468,28 @@ test("poker den: nobody can act, deal or stand for someone else, and one account
 test("poker den: a player who stands mid-hand folds, so a leaver cannot check its way to the pot", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), b = await h.connect(d, 2);
-  await h.say(d, a, { t: "sit", table: 0, seat: 0 });
-  await h.say(d, b, { t: "sit", table: 0, seat: 1 });
+  await h.say(d, a, { t: "sit", table: 6, seat: 0 });
+  await h.say(d, b, { t: "sit", table: 6, seat: 1 });
   await h.wait(d, FIRST_DEAL_MS);
-  const s = d.tables[0].rules.snapshot(), small = s.seats[s.turn].id, big = small === "1" ? "2" : "1";
+  const s = d.tables[6].rules.snapshot(), small = s.seats[s.turn].id, big = small === "1" ? "2" : "1";
   const smallWs = small === "1" ? a : b, bigWs = small === "1" ? b : a;
-  await h.say(d, smallWs, { t: "act", a: "call", v: lastTable(smallWs, 0).version });
+  await h.say(d, smallWs, { t: "act", a: "call", v: lastTable(smallWs, 6).version });
   await h.say(d, bigWs, { t: "stand" });
-  assert.equal(d.tables[0].rules.snapshot().phase, "showdown", "the leaver folded at once, with a free check open");
+  assert.equal(d.tables[6].rules.snapshot().phase, "showdown", "the leaver folded at once, with a free check open");
   assert.equal(h.store.get(`w:${big}`).b, R.BUY_IN - R.BIG, "and left with its stack less its blind");
-  assert.equal(d.tables[0].rules.snapshot().seats.find((p) => p?.id === big), undefined);
+  assert.equal(d.tables[6].rules.snapshot().seats.find((p) => p?.id === big), undefined);
 });
 
 test("poker den: Deal me in takes back a leave asked for mid-hand", async () => {
   const h = host(), d = await h.den();
   const socks = [await h.connect(d, 1), await h.connect(d, 2), await h.connect(d, 3)];
-  for (const [n, ws] of socks.entries()) await h.say(d, ws, { t: "sit", table: 2, seat: n });
+  for (const [n, ws] of socks.entries()) await h.say(d, ws, { t: "sit", table: 8, seat: n });
   await h.wait(d, FIRST_DEAL_MS);
-  const s = d.tables[2].rules.snapshot(), waiting = s.seats.find((p, i) => p && i !== s.turn).id, ws = socks[Number(waiting) - 1];
+  const s = d.tables[8].rules.snapshot(), waiting = s.seats.find((p, i) => p && i !== s.turn).id, ws = socks[Number(waiting) - 1];
   await h.say(d, ws, { t: "stand" });
   await h.say(d, ws, { t: "out", on: false });
-  while (d.tables[2].rules.playing) await h.wait(d, TURN_MS);
-  assert.ok(d.tables[2].rules.snapshot().seats.some((p) => p?.id === waiting), "still seated after the hand");
+  while (d.tables[8].rules.playing) await h.wait(d, TURN_MS);
+  assert.ok(d.tables[8].rules.snapshot().seats.some((p) => p?.id === waiting), "still seated after the hand");
 });
 
 test("poker den: a page that loses its network without a close is swept as stale and stood up in time", async () => {
@@ -520,14 +531,14 @@ test("poker den: the sweep still drops a silent page and a banned account when t
 test("poker den: a hand's end tells each seated player whether the free refill is open", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), b = await h.connect(d, 2);
-  await h.say(d, a, { t: "sit", table: 3, seat: 0 });
-  await h.say(d, b, { t: "sit", table: 3, seat: 1 });
+  await h.say(d, a, { t: "sit", table: 9, seat: 0 });
+  await h.say(d, b, { t: "sit", table: 9, seat: 1 });
   await h.wait(d, FIRST_DEAL_MS);
   // All in and called: one stack goes to zero, unless the board splits the pot.
-  const s = d.tables[3].rules.snapshot(), first = s.seats[s.turn].id === "1" ? a : b, second = first === a ? b : a;
-  await h.say(d, first, { t: "act", a: "raise", n: lastTable(first, 3).legal.max, v: lastTable(first, 3).version });
-  await h.say(d, second, { t: "act", a: "call", v: lastTable(second, 3).version });
-  const seats = d.tables[3].rules.snapshot().seats;
+  const s = d.tables[9].rules.snapshot(), first = s.seats[s.turn].id === "1" ? a : b, second = first === a ? b : a;
+  await h.say(d, first, { t: "act", a: "raise", n: lastTable(first, 9).legal.max, v: lastTable(first, 9).version });
+  await h.say(d, second, { t: "act", a: "call", v: lastTable(second, 9).version });
+  const seats = d.tables[9].rules.snapshot().seats;
   for (const [ws, seat] of [[a, seats[0]], [b, seats[1]]]) {
     assert.equal(lastOf(ws, "wallet").topUp, seat.stack === 0, seat.stack === 0 ? "busted: the refill is open" : "chips left: it stays shut");
   }
@@ -536,7 +547,7 @@ test("poker den: a hand's end tells each seated player whether the free refill i
 test("poker den: a request that changes nothing writes and sends nothing", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), watcher = await h.connect(d, 9);
-  await h.say(d, a, { t: "sit", table: 1, seat: 4 });
+  await h.say(d, a, { t: "sit", table: 7, seat: 4 });
   await h.say(d, a, { t: "out", on: true });
   const writes = h.writes.count, sent = watcher.sent.length;
   for (let i = 0; i < 3; i++) await h.say(d, a, { t: "out", on: true });
@@ -562,13 +573,13 @@ test("poker den: a full den still lets a seated player back into their seat", as
 test("poker den: a deleted account's bananas stay deleted when the den wakes before its hand ends", async () => {
   const h = host(), d = await h.den();
   const socks = [await h.connect(d, 1), await h.connect(d, 2), await h.connect(d, 3)];
-  for (const [n, ws] of socks.entries()) await h.say(d, ws, { t: "sit", table: 5, seat: n });
+  for (const [n, ws] of socks.entries()) await h.say(d, ws, { t: "sit", table: 7, seat: n });
   await h.wait(d, FIRST_DEAL_MS);
-  const s = d.tables[5].rules.snapshot(), gone = s.seats.find((p, i) => p && i !== s.turn).id;
+  const s = d.tables[7].rules.snapshot(), gone = s.seats.find((p, i) => p && i !== s.turn).id;
   await d.forget(Number(gone));
   assert.equal(h.store.get(`w:${gone}`), undefined);
   const woken = await h.den();
-  while (woken.tables[5].rules.playing) await h.wait(woken, TURN_MS);
-  assert.equal(woken.tables[5].rules.snapshot().seats.find((p) => p?.id === gone), undefined, "its seat went with the hand");
+  while (woken.tables[7].rules.playing) await h.wait(woken, TURN_MS);
+  assert.equal(woken.tables[7].rules.snapshot().seats.find((p) => p?.id === gone), undefined, "its seat went with the hand");
   assert.equal(h.store.get(`w:${gone}`), undefined, "and nothing wrote its bananas back");
 });

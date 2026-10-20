@@ -422,6 +422,7 @@ export class PokerDen extends DurableObject {
 
   // All of the account's bananas to the seat (refilled to BUY_IN first when there are none).
   async sit(p, i, seat, now) {
+    if (i < R.LIVE_FROM) throw new Error(`Tables 1 to ${R.LIVE_FROM} are practice tables. The live tables are ${R.LIVE_FROM + 1} to ${TABLES}.`);
     if (this.seatOf(p.id)) throw new Error("You already have a seat. Leave it before taking another.");
     const w = await this.wallet(p.id);
     if (this.players.get(p.id) !== p || this.seatOf(p.id)) return;
