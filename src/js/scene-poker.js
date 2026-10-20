@@ -175,6 +175,15 @@
     const rec = BL.net.remotes.get(Number(p.id));
     return rec && rec.body || p.name;
   };
+  // Holding a seat at the dealer's tables is not sitting in it: Walk the floor keeps the seat, and that player's page
+  // reports their Ooga in the aisle. They sit while the room has their Ooga at the chair, or before it has them at all.
+  const CHAIR_NEAR = 1.6;
+  const inChair = (p, i, j) => {
+    const rec = BL.net.remotes.get(Number(p.id));
+    if (!rec || !rec.body) return true;
+    const t = PM.TABLES[i], slot = PM.SEATS[j], dx = rec.x - t.x - slot.x, dz = rec.z - t.z - slot.z;
+    return dx * dx + dz * dz < CHAIR_NEAR * CHAIR_NEAR;
+  };
   const seatActors = (i, s) => {
     const view = room.tables[i], kept = looks[i];
     for (let j = 0; j < PM.SEATS.length; j++) {
@@ -191,14 +200,25 @@
         if (actor.parts.legL) actor.parts.legL.rotation.x = -1.35;
         view.actors[j] = actor; kept[j] = look; S.addChild(view.root, actor.root);
       }
-      if (view.actors[j]) view.actors[j].root.visible = visibleActor;
+      if (view.actors[j]) view.actors[j].root.visible = visibleActor && (p.bot || session.live?.kind !== "den" || inChair(p, i, j));
     }
   };
-  // Players seated at the dealer's tables, by the island room's id: their walking Ooga is hidden while it sits.
+  // Players sitting in their chairs at the dealer's tables, by the island room's id: their walking Ooga is hidden and
+  // the chair shows them; one who walks the floor is shown walking and the chair is empty. Checked every frame.
   const noteSeated = () => {
     seatedIds.clear();
     if (session.live?.kind !== "den") return;
-    for (const s of snapshots) if (s) for (const p of s.seats) if (p && p.id !== HERO) seatedIds.add(Number(p.id));
+    for (let i = 0; i < 10; i++) {
+      const s = snapshots[i];
+      if (!s) continue;
+      for (let j = 0; j < s.seats.length; j++) {
+        const p = s.seats[j];
+        if (!p || p.id === HERO) continue;
+        const sitting = inChair(p, i, j), actor = room.tables[i].actors[j];
+        if (sitting) seatedIds.add(Number(p.id));
+        if (actor) actor.root.visible = sitting;
+      }
+    }
   };
   const syncTable = i => {
     const t = session.tables[i], view = room.tables[i], s = t.snapshot(i === seatTable && !pendingStand ? HERO : null);
@@ -452,6 +472,7 @@
     const drivenHere = people.player;
     BL.net.setBody(drivenHere ? drivenHere.traits.name : null);
     if (drivenHere) { const p = drivenHere.root.position; BL.net.sendPose(p.x, p.y - drivenHere.baseY, p.z, drivenHere.root.rotation.y); BL.net.setHealth(drivenHere.health.value, drivenHere.health.stunned); }
+    noteSeated();
     remotes.update(dt);
     footsteps.update(drivenHere);
     mirror.phase.update(dt, elapsed); mirror.body.update(dt); mirror.body.time = mirror.phase.ripples.time;
