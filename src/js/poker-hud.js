@@ -224,7 +224,7 @@
         node.wrapper.classList.toggle("folded", !!p?.folded);
         node.wrapper.classList.toggle("winner", winner);
         node.wrapper.classList.toggle("empty", !p);
-        node.name.textContent = p ? `${p.name}${p.bot ? " · Bot" : ""}` : `Seat ${i + 1}`;
+        node.name.textContent = p ? `${p.name}${p.bot ? " · Bot" : ""}${s.won && s.won[p.id] ? ` · ★${chips(s.won[p.id])}` : ""}` : `Seat ${i + 1}`;
         node.stack.textContent = p ? chips(p.stack) : (idle || den) && !viewer ? "Sit here" : "Open";
         node.last.textContent = !p ? "" : winner ? `+${chips(s.result.awards[i])} collected` : p.folded ? "Folded" : p.inHand && !p.stack ? "All in" : p.out && !p.inHand ? "Sitting out" : p.lastAction || (i === s.turn ? "Thinking" : "");
         node.badge.textContent = p && s.hand ? [i === s.dealer ? "D" : "", i === s.smallBlind ? "SB" : "", i === s.bigBlind ? "BB" : ""].filter(Boolean).join(" · ") : "";
@@ -325,9 +325,20 @@
       by("view").textContent = seat ? "Table view" : "3D seat view";
       by("view").setAttribute("aria-pressed", String(seat));
     };
-    return { update, countdown, setFocused, setTheme, setLive, setView, setConnecting(value) { viewBusy = !!value; setLive(live); }, notice: noticeText, get focused() { return focused; }, dispose() {
+    // The leaderboard of hands won at the live tables (`GET /api/poker/leaderboard`); null hides it, as off the site.
+    const setLeaders = rows => {
+      by("leaders-box").hidden = !rows;
+      by("leaders").replaceChildren(...(rows || []).map(r => {
+        const li = document.createElement("li"), name = document.createElement("span"), n = document.createElement("span");
+        name.textContent = r.login; n.textContent = `★ ${chips(r.hands_won)}`;
+        li.append(name, n);
+        return li;
+      }));
+      if (rows && !rows.length) { const li = document.createElement("li"); li.textContent = "No hands won yet. Be the first."; by("leaders").append(li); }
+    };
+    return { update, countdown, setFocused, setTheme, setLive, setView, setLeaders, setConnecting(value) { viewBusy = !!value; setLive(live); }, notice: noticeText, get focused() { return focused; }, dispose() {
       el.removeEventListener("click", onClick); el.removeEventListener("input", onInput); el.removeEventListener("change", onChange);
-      by("tables").replaceChildren(); seatRoot.replaceChildren(); board.replaceChildren(); hand.replaceChildren(); by("history").replaceChildren();
+      by("tables").replaceChildren(); by("leaders").replaceChildren(); seatRoot.replaceChildren(); board.replaceChildren(); hand.replaceChildren(); by("history").replaceChildren();
       by("theme-choices").replaceChildren(); for (const picker of themeSelects) picker.replaceChildren();
       tableSelect.replaceChildren(); el.removeAttribute("data-your-turn"); el.removeAttribute("data-connection"); el.removeAttribute("data-view");
       sound.checked = false; setFocused(false); if (audio) { audio.close().catch(() => {}); audio = null; }

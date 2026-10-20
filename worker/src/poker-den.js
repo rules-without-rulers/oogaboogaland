@@ -20,7 +20,7 @@ import { DurableObject } from "cloudflare:workers";
 import "../../src/js/lifehash.js";
 import "../../src/js/poker-rules.js";
 import { STALE_MS, SWEEP_MS, playerFromHeaders, takeToken } from "./protocol.js";
-import { getPlayer } from "./db.js";
+import { addHandsWon, getHandsWon, getPlayer } from "./db.js";
 import {
   ACT_BURST, ACT_HZ, AWAY_STAND_MS, AWAY_TURN_MS, CLOSE_KICK, CLOSE_PROTOCOL, DEAL_GAP_MS, FIRST_DEAL_MS, MAX_SOCKETS, MISSED_OUT, TABLES, TURN_MS,
   dayOf, parsePokerMessage, topUpOpen,
@@ -36,7 +36,7 @@ const walletKey = (id) => `w:${id}`;
 // `fair`: the next hand's commitment, `{ seed, commit, seeds }` (the dealer's secret seed, its hash shown to every
 // page, and each seated page's seed by seat id). `reveal`: the last hand dealt, `{ hand, seed, commit, seeds, order }`,
 // shown once that hand is over so any page can recompute its deck (poker-rules.js `checkReveal`).
-const freshMeta = () => ({ deadline: 0, dealAt: 0, turnVersion: 0, ended: 0, misses: {}, leaving: [], gone: {}, away: [], fair: null, reveal: null });
+const freshMeta = () => ({ deadline: 0, dealAt: 0, turnVersion: 0, ended: 0, misses: {}, leaving: [], gone: {}, away: [], fair: null, reveal: null, won: {} });
 const randomHex = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
 const committed = () => {
   const seed = randomHex();
@@ -51,6 +51,9 @@ export class PokerDen extends DurableObject {
     this.wallets = new Map();
     this.forgotten = new Set();
     this.alarmAt = null;
+    // Wins not yet in D1, by account id: stored, so a failed write goes with the next and a sleep or deploy loses none.
+    this.stats = {};
+    this.flushing = null;
     // The next sweep for silent sockets and revoked accounts, due while anyone is here (0 for none). Stored, so a den
     // woken by its alarm still knows the sweep fell due.
     this.sweepAt = 0;
@@ -64,6 +67,7 @@ export class PokerDen extends DurableObject {
       }
       this.forgotten = new Set((await ctx.storage.get("forgotten")) || []);
       this.sweepAt = (await ctx.storage.get("sweepAt")) || 0;
+      this.stats = (await ctx.storage.get("stats")) || {};
       // Everyone seated keeps their wallet in memory, so a hand ending pays it without waiting on storage; a deleted
       // account still seated until its hand ends has none.
       const seated = this.tables.flatMap((t) => t.rules.snapshot().seats.filter(Boolean).map((s) => Number(s.id))).filter((id) => !this.forgotten.has(id));
@@ -113,6 +117,7 @@ export class PokerDen extends DurableObject {
     s.commit = t.rules.playing ? r && r.commit : f ? f.commit : null;
     s.seeded = f && !t.rules.playing ? Object.keys(f.seeds) : [];
     s.reveal = !t.rules.playing && r && r.hand === s.hand ? r : null;
+    s.won = t.meta.won;
     return s;
   }
 
@@ -236,6 +241,7 @@ export class PokerDen extends DurableObject {
       this.wallets.set(id, w);
     }
     delete t.meta.misses[key];
+    delete t.meta.won[key];
     delete t.meta.gone[key];
     t.meta.leaving = t.meta.leaving.filter((k) => k !== key);
     t.meta.away = t.meta.away.filter((k) => k !== key);
@@ -268,6 +274,7 @@ export class PokerDen extends DurableObject {
       if (hand && t.meta.ended !== hand) {
         t.meta.ended = hand;
         changed = true;
+        this.tally(i);
         for (const key of [...t.meta.leaving]) {
           this.cashOut(i, key);
           moved.push(Number(key));
@@ -358,7 +365,8 @@ export class PokerDen extends DurableObject {
     const p = this.record(server, who);
     this.attach(p);
     this.players.set(who.id, p);
-    await this.wallet(who.id);
+    const [, won] = await Promise.all([this.wallet(who.id), this.handsWon(who.id)]);
+    p.won = won;
     if (this.players.get(who.id) === p) this.arrive(p, Date.now());
     this.reschedule();
     return new Response(null, { status: 101, webSocket: client });
@@ -425,6 +433,7 @@ export class PokerDen extends DurableObject {
     if (empty) w.d = dayOf(now);
     w.b = 0;
     t.meta.misses[key] = 0;
+    if (Number.isInteger(p.won)) t.meta.won[key] = p.won;
     this.armDeal(i, now);
     this.settle(i, now, [p.id]);
     this.sendWallet(p, now);
@@ -576,6 +585,47 @@ export class PokerDen extends DurableObject {
     }
   }
 
+  // Hands won so far by an account (null when D1 is out of reach, so its plate shows none rather than a wrong count).
+  async handsWon(id) {
+    if (!this.env.DB) return null;
+    try { return await getHandsWon(this.env.DB, id); } catch { return null; }
+  }
+
+  // The hand just over at table i: every seat that took a pot other than its own uncalled bet back won it (each
+  // winner of a split pot too). Counted here once per hand, before any leaver stands up, then sent to D1.
+  tally(i) {
+    const t = this.tables[i], s = t.rules.snapshot(), winners = new Set();
+    if (s.result) for (const pot of s.result.pots) if (!pot.refund) for (const j of pot.winners) if (s.seats[j]) winners.add(s.seats[j].id);
+    if (!winners.size) return;
+    for (const key of winners) {
+      const id = Number(key), p = this.players.get(id);
+      if (this.forgotten.has(id)) continue;
+      this.stats[id] = (this.stats[id] || 0) + 1;
+      if (key in t.meta.won) t.meta.won[key]++;
+      if (p && Number.isInteger(p.won)) p.won++;
+    }
+    this.ctx.storage.put("stats", this.stats);
+    this.flushStats();
+  }
+
+  // The outbox to D1 in one batch; what was sent comes off it only once D1 took it.
+  async flushStats() {
+    if (!this.env.DB || this.flushing) return;
+    const entries = Object.entries(this.stats).map(([id, n]) => [Number(id), n]);
+    if (!entries.length) return;
+    this.flushing = addHandsWon(this.env.DB, entries).then(() => {
+      for (const [id, n] of entries) {
+        const left = (this.stats[id] || 0) - n;
+        if (left > 0) this.stats[id] = left;
+        else delete this.stats[id];
+      }
+      this.ctx.storage.put("stats", this.stats);
+    }, () => {
+      // Kept for the next hand's flush or the next alarm.
+    }).finally(() => { this.flushing = null; });
+    await this.flushing;
+  }
+
   async alarm() {
     const now = Date.now();
     this.alarmAt = null;
@@ -595,13 +645,15 @@ export class PokerDen extends DurableObject {
     }
     this.reschedule();
     this.tidy();
+    await this.flushStats();
   }
 
-  // The account was deleted (DELETE /api/me): its page is closed, its bananas go, and its seat goes now, or when
-  // the running hand ends if its chips are in it (that hand then pays it nothing).
-  async forget(id) {
+  // The account was deleted (DELETE /api/me, reason `revoked`) or signed out (/auth/logout, `signed-out`): its page
+  // is closed, its bananas go, and its seat goes now, or when the running hand ends if its chips are in it (that hand
+  // then pays it nothing). Its hands won stay in D1 on sign-out; deleting the account removes them there.
+  async forget(id, reason = "revoked") {
     const p = this.players.get(id);
-    if (p) this.evict(p, "revoked");
+    if (p) this.evict(p, reason);
     this.wallets.delete(id);
     const at = this.seatOf(id), now = Date.now(), key = String(id);
     if (at) {

@@ -78,11 +78,19 @@ needs no such trust; it stays in the repository for the local service.
 
 ### Bananas
 
-Each account keeps its own poker bananas, starting at 1,000. Sitting down brings all of them to the table and
-leaving brings your stack back. Once a UTC day, when your bananas on and off the table are below 1,000, a free
+Each account keeps its own poker bananas until it signs out, starting at 1,000; the next sign-in starts at 1,000
+again. Sitting down brings all of them to the table and leaving brings your stack back. Once a UTC day, when your bananas on and off the table are below 1,000, a free
 top-up brings them back to 1,000; sitting down with none uses it. They are play money: nothing buys, sells,
 transfers or redeems them, and they never meet the donation bananas that feed the Oogas. Practice chips stay
 session-only and refill free.
+
+### Hands won
+
+Every seat that takes a pot at a live table, other than the refund of its own uncalled bet, wins that hand; each
+winner of a split pot counts it. The dealer counts it once, as the hand ends, shows each seat's total on its name
+plate (★) and adds it to D1's `poker_stats` (GitHub login and hands won) through a stored outbox, so a failed write is
+sent with the next. Signing out keeps them; `DELETE /api/me` deletes them. The lobby's **Top players** shows the top
+twenty from the public `GET /api/poker/leaderboard`. Practice hands play on the page and are never counted.
 
 ### The dealer
 
@@ -92,8 +100,8 @@ own origin, a live session, and `POKER_LIMITER` (20 connections a minute per pla
 dealer table (`BL.pokerRules.createDealer`), saved after every change with any wallet it moved in one storage write,
 so a hand outlives the object sleeping, an eviction or a deploy. One alarm, set for the earliest turn clock,
 automatic deal or stand-up across the tables, does all the timing; nothing runs on a timer, and the object sleeps
-whenever no table is waiting on anything. `DELETE /api/me` tells it to forget the account: its bananas go, its page
-closes, and its seat goes at once, or when the running hand ends if its chips are in it.
+whenever no table is waiting on anything. `DELETE /api/me` and `/auth/logout` tell it to forget the account: its
+bananas go, its page closes, and its seat goes at once, or when the running hand ends if its chips are in it.
 
 The page's side is `src/js/poker-net.js`: one socket while you play or watch, the dealer's latest view of every
 table in the shape a practice table has, reconnects with backoff, and `busy` while a move awaits the dealer, so a

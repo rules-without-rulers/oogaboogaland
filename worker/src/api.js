@@ -1,10 +1,10 @@
-// /api/*: who is signed in, their display name, and deleting the account.
+// /api/*: who is signed in, their display name, deleting the account, and the Ember Den's leaderboard.
 // Signed out, /api/me answers 200 with `player: null`, so a signed-out page logs nothing. Its `donations` says
 // whether this Worker reaches bananapayserver (the `DONATIONS` binding), which turns the page's real donations on
 // through its own address; without the binding the page stays simulated.
 
 import { cookieNames, isSecureOrigin, serializeCookie } from "./cookies.js";
-import { deletePlayer, getPlayer, publicPlayer, sanitizeDisplay, updateDisplay } from "./db.js";
+import { deletePlayer, getPlayer, pokerLeaders, publicPlayer, sanitizeDisplay, updateDisplay } from "./db.js";
 import { fromSite, getSessionForRemoval, getSessionFromRequest, json, text } from "./http.js";
 import { DEN_NAME } from "./poker-protocol.js";
 
@@ -50,8 +50,15 @@ const me = async (request, env) => {
   return json({ error: "method not allowed" }, 405, { allow: "GET, PATCH, DELETE" });
 };
 
+// The Ember Den's leaderboard, public: GitHub logins and hands won at the live tables, top 20.
+const pokerLeaderboard = async (request, env) => {
+  if (request.method !== "GET") return json({ error: "method not allowed" }, 405, { allow: "GET" });
+  return json({ leaders: await pokerLeaders(env.DB, 20) }, 200, { "cache-control": "no-store" });
+};
+
 export const handleApi = (request, env, url) => {
   if (url.pathname === "/api/me") return me(request, env);
+  if (url.pathname === "/api/poker/leaderboard") return pokerLeaderboard(request, env);
   if (url.pathname === "/api/health") return text("ok", 200);
   return json({ error: "not found" }, 404);
 };

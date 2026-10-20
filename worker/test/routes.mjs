@@ -5,6 +5,7 @@ import { compileFunction } from "node:vm";
 import * as cookies from "../src/cookies.js";
 import * as crypto from "../src/crypto.js";
 import * as db from "../src/db.js";
+import * as poker from "../src/poker-protocol.js";
 import { createOwnedCharacterLookup } from "../src/contributor-policy.js";
 
 const load = (name, dependencies, exports) => {
@@ -23,8 +24,8 @@ lookup = async () => null, fetcher = async () => { throw new Error("Unexpected n
     createOwnedCharacterLookup: (rows) => createOwnedCharacterLookup(rows, lookup) }, ["contributorFor"]);
   const http = load("http", { ...cookies, ...db, ...access }, ["json", "text", "redirect", "fromSite", "safeNext",
     "clientIp", "allowed", "sessionToken", "getSessionFromRequest", "getSessionForRemoval"]);
-  const auth = load("auth", { ...cookies, ...crypto, ...db, ...http, ...access, fetch: fetcher }, ["handleAuth"]);
-  const api = load("api", { ...cookies, ...db, ...http }, ["handleApi"]);
+  const auth = load("auth", { ...cookies, ...crypto, ...db, ...http, ...access, ...poker, fetch: fetcher }, ["handleAuth"]);
+  const api = load("api", { ...cookies, ...db, ...http, ...poker }, ["handleApi"]);
   const donations = load("donations", http, ["handleDonations"]);
   const main = load("index", { ...http, ...db, ...auth, ...api, ...donations }, ["worker"]);
   return { ...http, ...auth, ...api, ...donations, ...main };

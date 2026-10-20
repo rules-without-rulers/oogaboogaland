@@ -95,11 +95,35 @@ export const deleteSession = async (db, token) =>
 export const deleteAllSessions = (db, playerId) =>
   db.prepare("DELETE FROM sessions WHERE player_id = ?1").bind(playerId).run();
 
-/** Sessions go first: D1 enforces the foreign key, but the explicit order keeps the delete obvious. */
+/** Sessions and poker stats go first: D1 enforces the foreign keys, but the explicit order keeps the delete obvious. */
 export const deletePlayer = (db, id) => db.batch([
   db.prepare("DELETE FROM sessions WHERE player_id = ?1").bind(id),
+  db.prepare("DELETE FROM poker_stats WHERE player_id = ?1").bind(id),
   db.prepare("DELETE FROM players WHERE id = ?1").bind(id),
 ]);
+
+/** Hands an account has won at the Ember Den's live tables (0 for none yet). */
+export const getHandsWon = async (db, id) => {
+  const row = await db.prepare("SELECT hands_won FROM poker_stats WHERE player_id = ?1").bind(id).first();
+  return row ? row.hands_won : 0;
+};
+
+/** Wins to add, `[[playerId, count], ...]`, in one batch; the login comes from `players`, and an account deleted
+ *  meanwhile is skipped rather than failing the batch on its foreign key. */
+export const addHandsWon = (db, entries) => db.batch(entries.map(([id, count]) => db.prepare(
+  `INSERT INTO poker_stats (player_id, login, hands_won, updated_at)
+     SELECT id, login, ?2, ?3 FROM players WHERE id = ?1
+     ON CONFLICT(player_id) DO UPDATE SET login = excluded.login, hands_won = hands_won + excluded.hands_won,
+       updated_at = excluded.updated_at`,
+).bind(id, count, nowSeconds())));
+
+/** The leaderboard: the top `limit` accounts by hands won, the earlier to reach a count first. */
+export const pokerLeaders = async (db, limit = 20) => {
+  const { results } = await db.prepare(
+    "SELECT login, hands_won FROM poker_stats WHERE hands_won > 0 ORDER BY hands_won DESC, updated_at LIMIT ?1",
+  ).bind(limit).all();
+  return results;
+};
 
 export const purgeExpiredSessions = (db) =>
   db.prepare("DELETE FROM sessions WHERE expires_at <= ?1").bind(nowSeconds()).run();

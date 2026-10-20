@@ -1429,10 +1429,11 @@
         <div class="poker-filters" role="group" aria-label="Filter tables"><button type="button" data-poker-filter="all" aria-pressed="true">All tables</button><button type="button" data-poker-filter="open" aria-pressed="false">Open seats</button><button type="button" data-poker-filter="playing" aria-pressed="false">In play</button></div>
         <div class="poker-tables" data-poker="tables" aria-label="Ten poker tables"></div>
         <p class="poker-empty-list" data-poker="empty-list" hidden>No tables match. Try All tables.</p>
+        <details class="poker-lobby-options poker-leaders" data-poker="leaders-box" hidden><summary>Top players · hands won at the live tables</summary><ol class="poker-leaders-list" data-poker="leaders"></ol></details>
         <details class="poker-lobby-options"><summary>Room style &amp; connection options</summary>
           <div class="poker-theme-picker"><label>Cave theme <select data-poker-theme-select aria-label="Poker floor theme"></select></label><div class="poker-theme-choices" data-poker="theme-choices" aria-label="Choose a cave theme"></div><p data-poker="theme-description"></p></div>
           <label class="poker-nickname" data-poker="nickname-row">Local service name <input data-poker="nickname" maxlength="32" value="Ooga" autocomplete="off"></label>
-          <p data-poker="identity-note">Live tables use your GitHub name, and your bananas stay with your account between visits.</p>
+          <p data-poker="identity-note">Live tables use your GitHub name. Your bananas stay with your account until you sign out; your hands won stay for the leaderboard.</p>
         </details>
         <p class="poker-notice" data-poker="floor-notice" role="status" aria-live="polite"></p>
         <p class="poker-help" data-coarse="Move with the sticks. Tap a table to watch.">WASD to explore · click a table to watch</p>

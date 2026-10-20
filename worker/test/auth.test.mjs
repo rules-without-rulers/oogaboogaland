@@ -184,7 +184,8 @@ test("eligible sessions share one character check with the API and strip forged 
 test("formerly eligible visitors can clear their own sessions or delete their account, with same-site checks", async () => {
   const { worker } = routeFixture({ cast: CAST });
   for (const [path, method] of [["/auth/logout?all=1", "POST"], ["/api/me", "DELETE"]]) {
-    const DB = database("visitor"), env = { SITE_ORIGIN: SITE, DB };
+    const forgotten = [], POKER = { getByName: () => ({ forget: async (...args) => { forgotten.push(args); } }) };
+    const DB = database("visitor"), env = { SITE_ORIGIN: SITE, DB, POKER };
     assert.equal((await worker.fetch(requestFor(path, method, { origin: "https://elsewhere.test" }), env)).status, 403);
     assert.equal(DB.writes.length, 0);
     const response = await worker.fetch(requestFor(path, method), env);
@@ -192,6 +193,10 @@ test("formerly eligible visitors can clear their own sessions or delete their ac
     assert.match(response.headers.get("set-cookie"), /__Host-obl_session=;.*Max-Age=0/);
     assert.match(DB.writes[0].sql, /DELETE FROM sessions WHERE player_id/);
     assert.equal(DB.writes[0].values[0], 123);
-    if (method === "DELETE") assert.match(DB.writes[1].sql, /DELETE FROM players WHERE id/);
+    assert.deepEqual(forgotten, method === "DELETE" ? [[123]] : [[123, "signed-out"]], "the Ember Den lets go of the seat and bananas");
+    if (method === "DELETE") {
+      assert.match(DB.writes[1].sql, /DELETE FROM poker_stats WHERE player_id/, "the Ember Den's hands won go with the account");
+      assert.match(DB.writes[2].sql, /DELETE FROM players WHERE id/);
+    }
   }
 });

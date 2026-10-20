@@ -20,7 +20,7 @@
   const mayPick = c => !BL.net.mayDrive(c.name, BL.contributors.stateFor(c) === "working");
   const accountChanged = () => {
     if (!avatar) return;
-    if (session?.live?.account && session.live.account !== String(BL.net.state.me?.id)) session.live.disconnect(session.live.kind === "den" ? "You signed out, so you left the live tables. Your seat and bananas wait for you." : "Account changed. Reload and sign in to the original account to recover this game.");
+    if (session?.live?.account && session.live.account !== String(BL.net.state.me?.id)) session.live.disconnect(session.live.kind === "den" ? "You signed out, so you left the live tables. Poker bananas start fresh at your next sign-in." : "Account changed. Reload and sign in to the original account to recover this game.");
     const released = BL.net.state.released;
     const denied = mayPossess(avatar) || (released && released.name === avatar.traits.name ? "That Ooga is no longer yours to drive" : null);
     BL.net.state.released = null;
@@ -101,7 +101,7 @@
       const tags = (s.hand && j === s.dealer ? " · D" : "") + (live && j === s.smallBlind ? " · SB" : "") + (live && j === s.bigBlind ? " · BB" : "");
       const state = p.folded ? "Folded" : p.inHand && !p.stack ? "All in" : p.out && !p.inHand ? "Sitting out" : live && p.inHand ? p.lastAction : "";
       pl.me = p.id === HERO; pl.acting = live && j === s.turn; pl.faded = p.folded || p.out && !p.inHand;
-      pl.name = p.name; pl.info = number.format(p.stack) + tags + (state ? " · " + state : "");
+      pl.name = s.won && s.won[p.id] ? `${p.name} ★${number.format(s.won[p.id])}` : p.name; pl.info = number.format(p.stack) + tags + (state ? " · " + state : "");
     }
     potText = live && s.pot ? `Pot ${number.format(s.pot)}` : "";
   };
@@ -146,7 +146,20 @@
     renderOpts.sky = theme.sky; renderOpts.ground = theme.ground; renderOpts.direct = theme.direct; renderOpts.ambientFloor = theme.ambient;
   };
   const leaveFloor = () => { if (leaving) return; if (session.live && seatTable >= 0) { panel.notice(session.live.kind === "den" ? "Leave your seat before you go: it’s under Table options in the table view. Your bananas come with you." : "Stand between hands before leaving. You can walk the floor while connected."); return; } if (go("bifrost", null, true)) leaving = true; };
+  // The live tables' leaderboard, on the Worker's site only: read when the floor opens and when the visitor comes back
+  // to the lobby, at most every LEADERS_MS; an answer that lands after the visit ended is dropped.
+  const LEADERS_MS = 30000;
+  let leadersAt = -Infinity;
+  const loadLeaders = () => {
+    if (!BL.net.state.backend || performance.now() - leadersAt < LEADERS_MS) return;
+    leadersAt = performance.now();
+    const v = visit;
+    fetch("/api/poker/leaderboard", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(body => {
+      if (v === visit && panel && body && Array.isArray(body.leaders)) panel.setLeaders(body.leaders);
+    }, () => { /* the next look tries again */ });
+  };
   const setView = focused => {
+    if (!focused) loadLeaders();
     panel.setFocused(focused); pilot.controls.reset();
     BL.net.setPokerVoice(focused ? selected : null);
     pilot.setActive(!focused);
@@ -452,6 +465,7 @@
     mirror.body.track(avatar.root, avatar.traits.height * 2, Math.max(avatar.headOpen.verts.length, avatar.headClosed.verts.length));
     if (seatTable >= 0 && !pendingStand) sit(session.tables[seatTable].snapshot().seats.findIndex(s => s?.id === HERO));
     seatView = loadView(); viewOn = false; avatarHidden = false; mySeat = -1;
+    leadersAt = -Infinity;
     panel = BL.pokerHud.create(action, select); panel.setView(seatView); setTheme(theme.id); refresh(); setView(seatTable >= 0 && !pendingStand);
     scene.root = root; scene.camera = camera; scene.input = input;
     scene.debug = { camera, pilot, hud, crew: people, cavemen: people.cavemen, controls: pilot.controls, poker: { session, room, action, select, snapshots, eye: EYE } };

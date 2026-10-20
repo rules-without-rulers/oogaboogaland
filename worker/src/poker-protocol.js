@@ -16,8 +16,9 @@
 //                wallet { bananas, topUp }  your bananas off the tables, and whether today's top-up is open
 //                notice { text }            something the dealer did for you (sat you out, stood you up)
 //                error { text }             your request was refused, and why
-//                kick { reason }            `replaced` (a newer tab), `full`, `stale` (silent STALE_MS: reconnect) or
-//                                            `revoked` (banned or deleted); the socket closes after it
+//                kick { reason }            `replaced` (a newer tab), `full`, `stale` (silent STALE_MS: reconnect),
+//                                            `revoked` (banned or deleted) or `signed-out` (seat and bananas let go);
+//                                            the socket closes after it
 // A view is the rules engine's `snapshot(viewer)` plus the dealer's clocks: `deadline`, when the player to act runs
 // out of time, and `dealAt`, when the next hand deals (server milliseconds; 0 for none). It also carries the deal's
 // commit-reveal: `commit`, the SHA-256 commitment to the dealer's seed for the hand being played or the next one;

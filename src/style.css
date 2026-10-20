@@ -8042,6 +8042,9 @@ body[data-active-scene="poker"] .world-clock { display: none; }
 #poker .poker-table-row.your-table::after { content: "YOUR SEAT"; position: absolute; bottom: 9px; right: 10px; color: var(--pk-bright); font-size: 7px; letter-spacing: 0.07em; }
 .poker-table-row.your-table .poker-seat-dots { visibility: hidden; }
 .poker-lobby-options { margin-top: 16px; padding-top: 6px; border-top: 1px solid var(--pk-line); font-size: 11px; color: var(--pk-muted); }
+.poker-leaders-list { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 4px; }
+.poker-leaders-list li { display: flex; justify-content: space-between; gap: 10px; color: var(--pk-text); overflow-wrap: anywhere; }
+.poker-leaders-list li span:last-child { color: var(--pk-bright); font-variant-numeric: tabular-nums; white-space: nowrap; }
 #poker summary { cursor: pointer; min-height: 44px; align-content: center; }
 .poker-nickname { display: grid; gap: 5px; }
 .poker-nickname input { min-height: 40px; box-sizing: border-box; width: 100%; border: 1px solid var(--pk-line); border-radius: 7px; padding: 8px; background: var(--pk-deep); color: var(--pk-text); font: inherit; }

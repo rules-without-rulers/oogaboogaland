@@ -7,6 +7,7 @@ import { randomToken, sameString } from "./crypto.js";
 import { createSession, deleteAllSessions, deleteSession, SESSION_SECONDS, upsertPlayerFromGitHub } from "./db.js";
 import { allowed, clientIp, fromSite, getSessionForRemoval, redirect, safeNext, text } from "./http.js";
 import { contributorFor } from "./contributor-access.js";
+import { DEN_NAME } from "./poker-protocol.js";
 
 const STATE_SECONDS = 600;
 const GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize";
@@ -98,6 +99,15 @@ const logout = async (request, env, url) => {
   if (found) {
     if (url.searchParams.get("all") === "1") await deleteAllSessions(env.DB, found.player.id);
     else await deleteSession(env.DB, found.token);
+    // Poker bananas last only until sign-out: the Ember Den lets go of the account's seat and bananas (its hands won
+    // stay). A den that cannot be reached does not hold the sign-out back.
+    if (env.POKER) {
+      try {
+        await env.POKER.getByName(DEN_NAME).forget(found.player.id, "signed-out");
+      } catch (err) {
+        console.error("poker den sign-out failed", err);
+      }
+    }
   }
   const clear = serializeCookie(cookieNames(env.SITE_ORIGIN).session, "", { maxAge: 0, secure: isSecureOrigin(env.SITE_ORIGIN) });
   return new Response(null, { status: 204, headers: { "set-cookie": clear, "cache-control": "no-store" } });

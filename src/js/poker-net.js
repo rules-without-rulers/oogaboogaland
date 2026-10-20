@@ -14,6 +14,7 @@
     replaced: "Live tables opened in another tab. Reconnect to play here instead.",
     full: "The live floor is full right now. Try again in a little while.",
     revoked: "Live tables closed for this account.",
+    "signed-out": "You signed out, so you left the live tables. Poker bananas start fresh at your next sign-in.",
   };
   const create = (changed, notice) => {
     let ws = null, retry = 0, retryTimer = 0, pingTimer = 0, welcomeTimer = 0, stopped = true, welcomed = null;

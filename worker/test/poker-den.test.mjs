@@ -37,6 +37,8 @@ const host = () => {
     WebSocketPair, Response, WebSocketRequestResponsePair: class {}, Date: { now: () => clock.now }, console, crypto: globalThis.crypto,
     // db.js's read, over whatever `env.DB` a test passes to `den(env)`.
     getPlayer: (db, id) => db.getPlayer(id),
+    getHandsWon: (db, id) => db.getHandsWon(id),
+    addHandsWon: (db, entries) => db.addHandsWon(entries),
   };
   runInNewContext(source, context);
   const clone = (v) => v === undefined ? undefined : structuredClone(v);
@@ -381,6 +383,58 @@ test("poker den: deleting the account closes its page, frees its seat and forget
   assert.equal(d.tables[9].rules.snapshot().seats[0], null);
   assert.equal(h.store.get("w:1"), undefined);
   assert.equal(JSON.stringify(h.store.get("t9")).includes('"1"'), false, "nothing of it left in the table's storage");
+});
+
+// Rule: bananas last until sign-out; the next sign-in starts afresh, and a running hand pays a signed-out seat nothing.
+test("poker den: signing out lets go of the seat and the bananas, and the next visit starts at BUY_IN", async () => {
+  const h = host(), d = await h.den();
+  const a = await h.connect(d, 1), b = await h.connect(d, 2);
+  await h.say(d, a, { t: "sit", table: 8, seat: 0 });
+  await h.say(d, b, { t: "sit", table: 8, seat: 1 });
+  await h.wait(d, FIRST_DEAL_MS);
+  assert.equal(lastTable(a, 8).phase, "preflop");
+  await d.forget(1, "signed-out");
+  assert.equal(lastOf(a, "kick").reason, "signed-out");
+  assert.equal(h.store.get("w:1"), undefined, "the bananas are gone");
+  for (let i = 0; i < 4; i++) await h.wait(d, 30000);
+  assert.equal(d.tables[8].rules.snapshot().seats[0], null, "the seat is freed once the hand is over");
+  assert.equal(h.store.get("w:1"), undefined, "the hand paid the signed-out seat nothing");
+  const again = await h.connect(d, 1);
+  assert.equal(lastOf(again, "welcome").wallet.bananas, R.BUY_IN);
+});
+
+// Rule: hands won are counted once per hand at the live tables, shown on the plates and kept in D1, a failed write
+// retried rather than lost.
+test("poker den: a hand's winner is counted once, shown on its plate and written to D1, retried after a failure", async () => {
+  const won = new Map([[1, 5]]), written = [];
+  let failNext = true;
+  const env = { DB: {
+    getPlayer: async (id) => ({ id }),
+    getHandsWon: async (id) => won.get(id) || 0,
+    addHandsWon: async (entries) => {
+      if (failNext) { failNext = false; throw new Error("D1 unavailable"); }
+      written.push(entries);
+      for (const [id, n] of entries) won.set(id, (won.get(id) || 0) + n);
+    },
+  } };
+  const h = host(), d = await h.den(env);
+  const a = await h.connect(d, 1), b = await h.connect(d, 2);
+  await h.say(d, a, { t: "sit", table: 6, seat: 0 });
+  await h.say(d, b, { t: "sit", table: 6, seat: 1 });
+  assert.deepEqual(lastTable(b, 6).won, { 1: 5, 2: 0 }, "each seat shows its hands won so far");
+  await h.wait(d, FIRST_DEAL_MS);
+  const s = lastTable(a, 6), folder = s.seats[s.turn].id, winner = folder === "1" ? "2" : "1";
+  await h.say(d, folder === "1" ? a : b, { t: "act", a: "fold", v: s.version });
+  const before = { 1: 5, 2: 0 };
+  assert.equal(lastTable(a, 6).won[winner], before[winner] + 1, "the winner's plate counts the hand");
+  assert.equal(lastTable(a, 6).won[folder], before[folder]);
+  assert.equal(written.length, 0, "the first write failed");
+  assert.deepEqual(h.store.get("stats"), { [winner]: 1 }, "and the win waits in the stored outbox");
+  d.alarmAt = null;
+  await d.alarm();
+  assert.deepEqual(JSON.parse(JSON.stringify(written)), [[[Number(winner), 1]]], "the next flush sends it once");
+  assert.deepEqual(h.store.get("stats"), {}, "and empties the outbox");
+  assert.equal(won.get(Number(winner)), before[winner] + 1);
 });
 
 test("poker den: nobody can act, deal or stand for someone else, and one account holds one seat", async () => {
