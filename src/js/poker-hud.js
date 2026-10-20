@@ -125,7 +125,7 @@
     const denHelp = (s, own, idle, ready) => {
       if (own?.out) return own.inHand ? "You’re sitting out from the next hand. Press Deal me in to keep playing." : "Press Deal me in and you’re dealt into the next hand.";
       if (!own) return idle ? "Pick any open seat. You bring all your bananas to the table." : "Take any open seat and you’re dealt into the next hand.";
-      if (idle && own.stack === 0) return live.wallet.topUp ? "Top up to 1,000 for free, once a day." : "Your free top-up comes back tomorrow.";
+      if (idle && own.stack === 0) return "Out of bananas? Refill to 1,000 for free.";
       if (idle) return ready < 2 ? "Invite a friend to this table. The dealer deals once two players are ready." : "The dealer deals the next hand in a few seconds.";
       if (own.folded) return "You can watch the hand or walk the floor.";
       if (!own.inHand) return "You’re dealt into the next hand.";
@@ -239,9 +239,9 @@
       by("start").hidden = !own && !!live || den && !idle;
       by("start").disabled = !idle || ready < 2 || paused || blocked || !!live && !own;
       by("start").textContent = den ? "Deal now" : s.hand ? "Deal next hand" : "Deal hand";
-      // The dealer's top-up is once a day, for bananas on and off the table below 1,000; practice refills any time.
+      // The dealer's refill opens when no bananas are left on or off the table; practice refills any time below 1,000.
       by("refill").hidden = !own || !idle && (!den || own.inHand) || (den ? !live.wallet.topUp : own.stack >= R.BUY_IN); by("refill").disabled = paused || blocked;
-      by("refill").textContent = den ? `Top up to ${chips(R.BUY_IN)} · free today` : own ? `Refill to ${chips(R.BUY_IN)} · free` : "Free refill";
+      by("refill").textContent = den ? `Refill to ${chips(R.BUY_IN)} · free` : own ? `Refill to ${chips(R.BUY_IN)} · free` : "Free refill";
       by("back-in").hidden = !den || !own?.out;
       by("back-in").disabled = blocked;
       by("stand").hidden = !viewer; by("stand").disabled = pendingStand || blocked || fair && !idle;

@@ -42,7 +42,7 @@ PR ownership check are described in [Contributor onboarding](contributor-onboard
 
 ## What is stored
 
-For a signed-in player: GitHub id, login, avatar URL, the chosen display name, sign-in and last-seen times, and for each session its token hash, times and the first 120 characters of the user agent. Once they join the Ember Den's live tables, the dealer's own storage also keeps their poker bananas (a count and the day of their last free top-up) until they sign out and, while they sit, their seat; D1's `poker_stats` keeps their GitHub login and hands won at the live tables, shown on the public leaderboard and kept after sign-out; `DELETE /api/me` deletes all of those too. Nothing for visitors who never sign in. No GitHub token is ever stored.
+For a signed-in player: GitHub id, login, avatar URL, the chosen display name, sign-in and last-seen times, and for each session its token hash, times and the first 120 characters of the user agent. Once they join the Ember Den's live tables, the dealer's own storage also keeps their poker bananas (a count) until they sign out and, while they sit, their seat; D1's `poker_stats` keeps their GitHub login and hands won at the live tables, shown on the public leaderboard and kept after sign-out; `DELETE /api/me` deletes all of those too. Nothing for visitors who never sign in. No GitHub token is ever stored.
 
 ## Presence
 
@@ -162,7 +162,7 @@ A signed-in visitor who joins the live tables in the Ember Den holds a second so
 | client → den | `{ t: "stand" }` | leave the seat, at once when out of the running hand, otherwise folding at its next turn and leaving when the hand ends; the stack goes back to the account |
 | client → den | `{ t: "act", a, n, v }` | fold, check, call or raise to the round total `n`, with the table version `v` the page saw: a version from before the current turn is refused |
 | client → den | `{ t: "seed", table, s }` | a seated page's random seed (64 hex) for the next deal, once per deal, after it sees that deal's `commit` |
-| client → den | `{ t: "deal" }`, `{ t: "out", on }`, `{ t: "topup" }` | deal now; sit out, or be dealt in again (which also takes back a leave asked for mid-hand); the free daily top-up to 1,000 |
+| client → den | `{ t: "deal" }`, `{ t: "out", on }`, `{ t: "topup" }` | deal now; sit out, or be dealt in again (which also takes back a leave asked for mid-hand); the free refill to 1,000 when none are left |
 | den → client | `welcome { you, now, wallet, tables }` | on connect: the account, its bananas off the tables and every table's view |
 | den → client | `table { i, s, now }` | a table changed: its view for this page, with `deadline` (the acting player's clock) and `dealAt` (the next deal), both in the den's milliseconds |
 | den → client | `wallet`, `notice`, `error`, `kick` | the account's bananas changed; something the dealer did for the player; a refused request and why; `replaced` (a newer tab), `full` (64 sockets, though a seated player is always let back in), `stale` (silent 90 s; the page reconnects), `revoked` (the account was banned or deleted) or `signed-out` (it signed out: its seat and bananas are gone) |

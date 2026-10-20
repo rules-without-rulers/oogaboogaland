@@ -79,8 +79,8 @@ needs no such trust; it stays in the repository for the local service.
 ### Bananas
 
 Each account keeps its own poker bananas until it signs out, starting at 1,000; the next sign-in starts at 1,000
-again. Sitting down brings all of them to the table and leaving brings your stack back. Once a UTC day, when your bananas on and off the table are below 1,000, a free
-top-up brings them back to 1,000; sitting down with none uses it. They are play money: nothing buys, sells,
+again. Sitting down brings all of them to the table and leaving brings your stack back. When none are left on or
+off the table, a free refill brings them back to 1,000, as often as they run out; sitting down with none uses it. They are play money: nothing buys, sells,
 transfers or redeems them, and they never meet the donation bananas that feed the Oogas. Practice chips stay
 session-only and refill free.
 
@@ -179,7 +179,7 @@ controls stay, and a theme can change mid-hand without touching a bet.
 
 `npm --prefix worker test` runs the dealer on a mocked Durable Object host with the real rules engine: who sees
 which cards over up to 300 hands, the deal and turn clocks, sitting out and dealing back in, a closed page, a silent
-one and a restart, standing mid-hand, top-ups, account deletion across a restart, a full den, one seat per account,
+one and a restart, standing mid-hand, refills, account deletion across a restart, a full den, one seat per account,
 requests that change nothing and refused moves. The unit tier (`npm run test:unit`)
 keeps the rules checks: hand ranking, pots, odd chips, secure entropy, privacy of snapshots and 300 nine-player
 practice hands. The browser sessions `poker floor and play`, `poker canvas2d` and `poker phone` cover the room and

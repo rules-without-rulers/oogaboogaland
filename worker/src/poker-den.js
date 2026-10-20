@@ -10,9 +10,8 @@
 // sweep every SWEEP_MS lets go of sockets silent past STALE_MS and of accounts banned or deleted, as the room's does. A table with two players ready deals by itself,
 // FIRST_DEAL_MS after it fills and DEAL_GAP_MS after a hand. All of it rides one alarm set for the next deadline,
 // so the den sleeps whenever no table is waiting on anything; nothing here runs on a timer.
-// Bananas: each account keeps its own (`w:<id>`: `b` off the tables, `d` the UTC day of its last top-up). Sitting
-// takes all of them to the table and standing brings the stack back; a free top-up to BUY_IN is open once a day when
-// they run low. Free play money: nothing buys, sells, transfers or redeems them, and they never meet donations.
+// Bananas: each account keeps its own until it signs out (`w:<id>`: `b` off the tables). Sitting takes all of them
+// to the table and standing brings the stack back; with none left on or off the table a free refill to BUY_IN is open. Free play money: nothing buys, sells, transfers or redeems them, and they never meet donations.
 // Storage: `t<i>` is table i (its dump and the den's clocks for it), written in one put with any wallet it moved.
 // `forgotten` lists deleted accounts whose chips were in a running hand, so that hand pays them nothing.
 
@@ -23,7 +22,7 @@ import { STALE_MS, SWEEP_MS, playerFromHeaders, takeToken } from "./protocol.js"
 import { addHandsWon, getHandsWon, getPlayer } from "./db.js";
 import {
   ACT_BURST, ACT_HZ, AWAY_STAND_MS, AWAY_TURN_MS, CLOSE_KICK, CLOSE_PROTOCOL, DEAL_GAP_MS, FIRST_DEAL_MS, MAX_SOCKETS, MISSED_OUT, TABLES, TURN_MS,
-  dayOf, parsePokerMessage, topUpOpen,
+  parsePokerMessage, topUpOpen,
 } from "./poker-protocol.js";
 
 const R = globalThis.BL.pokerRules;
@@ -73,7 +72,7 @@ export class PokerDen extends DurableObject {
       const seated = this.tables.flatMap((t) => t.rules.snapshot().seats.filter(Boolean).map((s) => Number(s.id))).filter((id) => !this.forgotten.has(id));
       if (seated.length) {
         const found = await ctx.storage.get(seated.map(walletKey));
-        for (const id of seated) this.wallets.set(id, found.get(walletKey(id)) || { b: 0, d: -1 });
+        for (const id of seated) this.wallets.set(id, found.get(walletKey(id)) || { b: 0 });
       }
     });
     // A woken den rebuilds who is here from the attachments its sockets carry.
@@ -149,7 +148,7 @@ export class PokerDen extends DurableObject {
     let w = (await this.ctx.storage.get(walletKey(id))) || null;
     if (this.wallets.has(id)) return this.wallets.get(id);
     if (!w) {
-      w = { b: R.BUY_IN, d: -1 };
+      w = { b: R.BUY_IN };
       this.ctx.storage.put(walletKey(id), w);
     }
     this.wallets.set(id, w);
@@ -158,7 +157,7 @@ export class PokerDen extends DurableObject {
 
   walletView(id, now = Date.now()) {
     const w = this.wallets.get(id), at = this.seatOf(id);
-    return { bananas: w ? w.b : 0, topUp: !!w && topUpOpen(w, at ? at.p.stack : 0, now, R.BUY_IN) };
+    return { bananas: w ? w.b : 0, topUp: !!w && topUpOpen(w, at ? at.p.stack : 0) };
   }
 
   sendWallet(p, now = Date.now()) {
@@ -236,7 +235,7 @@ export class PokerDen extends DurableObject {
       this.wallets.delete(id);
       this.ctx.storage.put("forgotten", [...this.forgotten]);
     } else {
-      const w = this.wallets.get(id) || { b: 0, d: -1 };
+      const w = this.wallets.get(id) || { b: 0 };
       w.b += seat.stack;
       this.wallets.set(id, w);
     }
@@ -279,7 +278,7 @@ export class PokerDen extends DurableObject {
           this.cashOut(i, key);
           moved.push(Number(key));
         }
-        // Whoever stays hears whether today's top-up is now open for them, a bust stack's or a winner's.
+        // Whoever stays hears whether the free refill is now open for them, a bust stack's or a winner's.
         for (const seat of t.rules.snapshot().seats) {
           const p = seat && this.players.get(Number(seat.id));
           if (p) this.sendWallet(p, now);
@@ -421,16 +420,14 @@ export class PokerDen extends DurableObject {
     }
   }
 
-  // All of the account's bananas to the seat (topped up first when empty and today's top-up is open).
+  // All of the account's bananas to the seat (refilled to BUY_IN first when there are none).
   async sit(p, i, seat, now) {
     if (this.seatOf(p.id)) throw new Error("You already have a seat. Leave it before taking another.");
     const w = await this.wallet(p.id);
     if (this.players.get(p.id) !== p || this.seatOf(p.id)) return;
     const empty = w.b <= 0;
-    if (empty && w.d === dayOf(now)) throw new Error("You're out of bananas. The free top-up comes back tomorrow.");
     const key = String(p.id), t = this.tables[i];
     t.rules.join(key, p.display, false, seat, empty ? R.BUY_IN : w.b);
-    if (empty) w.d = dayOf(now);
     w.b = 0;
     t.meta.misses[key] = 0;
     if (Number.isInteger(p.won)) t.meta.won[key] = p.won;
@@ -498,20 +495,18 @@ export class PokerDen extends DurableObject {
     this.settle(at.table, now);
   }
 
-  // Once a UTC day, bananas on and off the table back up to BUY_IN.
+  // With no bananas left on or off the table, a free refill to BUY_IN, as often as it runs out.
   async topUp(p, now) {
     const w = await this.wallet(p.id);
     if (this.players.get(p.id) !== p) return;
     const at = this.seatOf(p.id);
-    if (!topUpOpen(w, at ? at.p.stack : 0, now, R.BUY_IN)) throw new Error(w.d === dayOf(now) ? "Your free top-up comes back tomorrow." : "You still have plenty of bananas.");
+    if (!topUpOpen(w, at ? at.p.stack : 0)) throw new Error("You still have bananas. The free refill opens when they run out.");
     if (at) {
       this.tables[at.table].rules.refill(String(p.id));
-      w.d = dayOf(now);
       this.armDeal(at.table, now);
       this.settle(at.table, now, [p.id]);
     } else {
       w.b = R.BUY_IN;
-      w.d = dayOf(now);
       this.ctx.storage.put(walletKey(p.id), w);
     }
     this.sendWallet(p, now);

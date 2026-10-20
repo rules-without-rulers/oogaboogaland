@@ -7,13 +7,13 @@
 //                { t: "deal" }               deal the next hand now rather than wait for the automatic deal
 //                { t: "out", on }            sit out of the next deals (true), or be dealt in again (false), which also
 //                                            takes back a leave asked for mid-hand
-//                { t: "topup" }              the free top-up to BUY_IN bananas, once a UTC day, when running low
+//                { t: "topup" }              the free refill to BUY_IN bananas, open whenever none are left on or off the table
 //                { t: "seed", table, s }     a seated page's random seed (64 hex) for the next deal at `table`, sent once
 //                                            it sees that deal's `commit`; the deck comes from the dealer's seed and these
 //                "ping"                      answered "pong" without waking the den
 // Den → client:  welcome { you, now, wallet, tables }  on connect: who you are, your bananas and every table's view
 //                table { i, s, now }        table `i` changed: its view for you, your own cards only where you sit
-//                wallet { bananas, topUp }  your bananas off the tables, and whether today's top-up is open
+//                wallet { bananas, topUp }  your bananas off the tables, and whether the free refill is open
 //                notice { text }            something the dealer did for you (sat you out, stood you up)
 //                error { text }             your request was refused, and why
 //                kick { reason }            `replaced` (a newer tab), `full`, `stale` (silent STALE_MS: reconnect),
@@ -42,13 +42,9 @@ export const MISSED_OUT = 2;
 // Requests a second per socket, bursting to ACT_BURST.
 export const ACT_HZ = 4;
 export const ACT_BURST = 8;
-export const DAY_MS = 86400000;
 export const CLOSE_KICK = 4000;
 export const CLOSE_PROTOCOL = 4400;
 export const DEN_NAME = "ember-den";
-
-/** The UTC day a millisecond time falls on: the top-up's calendar. */
-export const dayOf = (ms) => Math.floor(ms / DAY_MS);
 
 const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 const ACTIONS = new Set(["fold", "check", "call", "raise"]);
@@ -78,5 +74,6 @@ export const parsePokerMessage = (text) => {
   return null;
 };
 
-/** Whether today's free top-up is open: not yet taken today, and bananas on and off the table below `buyIn`. */
-export const topUpOpen = (wallet, stack, now, buyIn) => wallet.d !== dayOf(now) && wallet.b + stack < buyIn;
+/** Whether the free refill is open: no bananas left on or off the table. Bananas start afresh at each sign-in, so a
+ *  refill at zero gives nothing that signing out and back in would not. */
+export const topUpOpen = (wallet, stack) => wallet.b + stack <= 0;

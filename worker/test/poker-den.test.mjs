@@ -355,21 +355,23 @@ test("poker den: standing mid-hand folds when due and pays the stack back after 
   assert.ok(h.store.get(`w:${id}`).b > 0 && lastOf(ws, "wallet").bananas === h.store.get(`w:${id}`).b);
 });
 
-test("poker den: the free top-up is once a day and only when low; an empty wallet sits with it", async () => {
+test("poker den: the free refill opens only with no bananas left, as often as they run out; an empty wallet sits with it", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1);
   await h.say(d, a, { t: "topup" });
-  assert.match(lastOf(a, "error").text, /plenty/);
+  assert.match(lastOf(a, "error").text, /still have bananas/);
   d.wallets.get(1).b = 0;
   await h.say(d, a, { t: "sit", table: 8, seat: 0 });
-  assert.equal(d.tables[8].rules.snapshot().seats[0].stack, R.BUY_IN, "an empty wallet sat down with today's top-up");
+  assert.equal(d.tables[8].rules.snapshot().seats[0].stack, R.BUY_IN, "an empty wallet sat down refilled");
   await h.say(d, a, { t: "stand" });
   d.wallets.get(1).b = 10;
   await h.say(d, a, { t: "topup" });
-  assert.match(lastOf(a, "error").text, /tomorrow/);
-  h.clock.now += poker.DAY_MS;
-  await h.say(d, a, { t: "topup" });
-  assert.equal(lastOf(a, "wallet").bananas, R.BUY_IN);
+  assert.match(lastOf(a, "error").text, /still have bananas/, "ten bananas is not none");
+  for (let i = 0; i < 2; i++) {
+    d.wallets.get(1).b = 0;
+    await h.say(d, a, { t: "topup" });
+    assert.equal(lastOf(a, "wallet").bananas, R.BUY_IN, "refilled, every time it runs out");
+  }
   assert.equal(h.store.get("w:1").b, R.BUY_IN);
 });
 
@@ -515,16 +517,20 @@ test("poker den: the sweep still drops a silent page and a banned account when t
   assert.ok(d.players.has(3));
 });
 
-test("poker den: a hand's end tells each seated player whether today's top-up is open", async () => {
+test("poker den: a hand's end tells each seated player whether the free refill is open", async () => {
   const h = host(), d = await h.den();
   const a = await h.connect(d, 1), b = await h.connect(d, 2);
   await h.say(d, a, { t: "sit", table: 3, seat: 0 });
   await h.say(d, b, { t: "sit", table: 3, seat: 1 });
   await h.wait(d, FIRST_DEAL_MS);
-  const s = d.tables[3].rules.snapshot(), folder = s.seats[s.turn].id === "1" ? a : b, winner = folder === a ? b : a;
-  await h.say(d, folder, { t: "act", a: "fold", v: lastTable(folder, 3).version });
-  assert.equal(lastOf(folder, "wallet").topUp, true, "below 1,000 on and off the table: the top-up is open");
-  assert.equal(lastOf(winner, "wallet").topUp, false);
+  // All in and called: one stack goes to zero, unless the board splits the pot.
+  const s = d.tables[3].rules.snapshot(), first = s.seats[s.turn].id === "1" ? a : b, second = first === a ? b : a;
+  await h.say(d, first, { t: "act", a: "raise", n: lastTable(first, 3).legal.max, v: lastTable(first, 3).version });
+  await h.say(d, second, { t: "act", a: "call", v: lastTable(second, 3).version });
+  const seats = d.tables[3].rules.snapshot().seats;
+  for (const [ws, seat] of [[a, seats[0]], [b, seats[1]]]) {
+    assert.equal(lastOf(ws, "wallet").topUp, seat.stack === 0, seat.stack === 0 ? "busted: the refill is open" : "chips left: it stays shut");
+  }
 });
 
 test("poker den: a request that changes nothing writes and sends nothing", async () => {
