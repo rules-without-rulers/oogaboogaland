@@ -17,6 +17,7 @@
 // `forgotten` lists deleted accounts whose chips were in a running hand, so that hand pays them nothing.
 
 import { DurableObject } from "cloudflare:workers";
+import "../../src/js/lifehash.js";
 import "../../src/js/poker-rules.js";
 import { STALE_MS, SWEEP_MS, playerFromHeaders, takeToken } from "./protocol.js";
 import { getPlayer } from "./db.js";
@@ -32,7 +33,15 @@ const tableKey = (i) => `t${i}`;
 const walletKey = (id) => `w:${id}`;
 // `turnVersion`: the table's version when the current turn began; an action seen before it is stale.
 // `ended`: the last hand whose leavers were stood up. `gone`: seat → when its page went. `away`: seats sat out by that.
-const freshMeta = () => ({ deadline: 0, dealAt: 0, turnVersion: 0, ended: 0, misses: {}, leaving: [], gone: {}, away: [] });
+// `fair`: the next hand's commitment, `{ seed, commit, seeds }` (the dealer's secret seed, its hash shown to every
+// page, and each seated page's seed by seat id). `reveal`: the last hand dealt, `{ hand, seed, commit, seeds, order }`,
+// shown once that hand is over so any page can recompute its deck (poker-rules.js `checkReveal`).
+const freshMeta = () => ({ deadline: 0, dealAt: 0, turnVersion: 0, ended: 0, misses: {}, leaving: [], gone: {}, away: [], fair: null, reveal: null });
+const randomHex = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
+const committed = () => {
+  const seed = randomHex();
+  return { seed, commit: R.commitFor(seed), seeds: {} };
+};
 const ready = (rules) => rules.snapshot().seats.filter((s) => s && s.stack > 0 && !s.out).length;
 
 export class PokerDen extends DurableObject {
@@ -97,9 +106,13 @@ export class PokerDen extends DurableObject {
 
   // Table i as `viewer` sees it (null for the public view), with the den's clocks.
   view(i, viewer = null) {
-    const t = this.tables[i], s = t.rules.snapshot(viewer);
+    const t = this.tables[i], s = t.rules.snapshot(viewer), f = t.meta.fair, r = t.meta.reveal;
     s.deadline = t.meta.deadline;
     s.dealAt = t.meta.dealAt;
+    // The commitment for the hand being played, or for the next one; never a seed before its hand is over.
+    s.commit = t.rules.playing ? r && r.commit : f ? f.commit : null;
+    s.seeded = f && !t.rules.playing ? Object.keys(f.seeds) : [];
+    s.reveal = !t.rules.playing && r && r.hand === s.hand ? r : null;
     return s;
   }
 
@@ -182,7 +195,29 @@ export class PokerDen extends DurableObject {
   armDeal(i, now, gap = FIRST_DEAL_MS) {
     const t = this.tables[i];
     if (t.rules.playing || ready(t.rules) < 2) t.meta.dealAt = 0;
-    else if (!t.meta.dealAt) t.meta.dealAt = now + gap;
+    else if (!t.meta.dealAt) {
+      t.meta.dealAt = now + gap;
+      // Committed as the deal is booked, so the seated pages see the commitment and add their seeds before it.
+      if (!t.meta.fair) t.meta.fair = committed();
+    }
+  }
+
+  // The hand from the committed seed and every seed the seated pages sent in time; what deals it is kept to reveal.
+  dealHand(i) {
+    const t = this.tables[i];
+    if (!t.meta.fair) t.meta.fair = committed();
+    const f = t.meta.fair, hand = t.rules.snapshot().hand + 1, seeds = Object.values(f.seeds);
+    t.rules.start(R.deckFrom(f.seed, seeds, hand));
+    t.meta.reveal = { hand, seed: f.seed, commit: f.commit, seeds, order: R.dealOrder(t.rules.snapshot()) };
+    t.meta.fair = null;
+  }
+
+  // A seated page's seed for the next deal, taken once per page while the deal is still to come.
+  seed(p, i, value) {
+    const at = this.seatOf(p.id), t = this.tables[i], key = String(p.id);
+    if (!at || at.table !== i || t.rules.playing || !t.meta.fair || key in t.meta.fair.seeds) return;
+    t.meta.fair.seeds[key] = value;
+    this.commit(i);
   }
 
   // A seat's stack back into its owner's bananas, and the seat freed; only for a seat out of the running hand.
@@ -265,7 +300,7 @@ export class PokerDen extends DurableObject {
         t.meta.dealAt = 0;
         changed = true;
         if (ready(t.rules) >= 2) {
-          t.rules.start();
+          this.dealHand(i);
           this.armTurn(i, now);
           continue;
         }
@@ -370,6 +405,7 @@ export class PokerDen extends DurableObject {
       else if (msg.t === "stand") this.stand(p, now);
       else if (msg.t === "act") this.act(p, msg, now);
       else if (msg.t === "deal") this.deal(p, now);
+      else if (msg.t === "seed") this.seed(p, msg.table, msg.s);
       else if (msg.t === "out") this.out(p, msg.on, now);
       else if (msg.t === "topup") await this.topUp(p, now);
     } catch (error) {

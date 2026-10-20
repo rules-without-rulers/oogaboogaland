@@ -175,6 +175,12 @@
       const blocked = viewBusy || !!live && (live.busy || live.connection !== "live");
       // `den`: the Worker's dealer deals the live tables (poker-net.js); `fair`: the encrypted-deck service does.
       const den = live?.kind === "den", fair = !!live && !den;
+      // The dealer's commit-reveal: committed before the deal, checked by this page once the hand is over.
+      const deck = den ? live.deck : null, checkedHere = !!deck && deck.hand === s.hand && deck.ok !== null;
+      const deckText = !den ? "" : checkedHere ? deck.ok ? `Hand ${s.hand} deck verified ✓` : `Hand ${s.hand} deck check failed` : s.commit ? "Deck committed before the deal" : "";
+      if (by("deck-check").textContent !== deckText) by("deck-check").textContent = deckText;
+      by("deck-check").hidden = !deckText;
+      by("deck-check").classList.toggle("is-bad", checkedHere && !deck.ok);
       const ready = s.seats.filter(p => p && p.stack > 0 && !p.out).length;
       paused = isPaused; const idle = (s.phase === "waiting" || s.phase === "showdown") && (!fair || ["idle", "complete", "aborted"].includes(s.fairPhase)), fresh = switched || s.hand !== lastHand;
       snapshots.forEach((table, i) => {

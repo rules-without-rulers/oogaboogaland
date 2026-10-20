@@ -57,8 +57,15 @@ voice. These are public conversations, not private channels.
 
 ### Who sees which cards
 
-The dealer shuffles with `crypto.getRandomValues` (Fisher-Yates, bounded draws without modulo bias) and keeps the
-deck and every hole card inside its Durable Object, in memory and in its own storage. Each page gets the rules
+The dealer deals a commit-reveal deck and keeps it and every hole card inside its Durable Object, in memory and in
+its own storage. When it books a deal it draws a secret seed with `crypto.getRandomValues` and shows every page the
+seed's SHA-256 commitment (`commit`); each seated page then sends a random seed of its own (`seed`), and the deck is a
+Fisher-Yates driven by SHA-256 over the dealer's seed, the hand number and the seated pages' seeds (`deckFrom` in
+`poker-rules.js`). Once the hand is over the view carries `reveal` (the seed, the seeds, who was dealt in and in what
+order), and every page recomputes the deck and replays the deal against the cards it saw (`checkReveal`); the table's
+status line reads "Hand N deck verified ✓" or that the check failed. This shows the deck was fixed before the deal and
+not picked by the dealer alone; it does not hide the cards from the dealer during the hand, which the encrypted-deck
+service ([poker-protocol.md](poker-protocol.md)) does at a large cost in time and phones' CPU. Each page gets the rules
 engine's `snapshot(viewer)` for every table, where the viewer is the account the Worker vouched for from its session,
 never a field a page sends. That view carries the viewer's own two cards where they sit and nulls for everyone else's.
 At a showdown the hands still in are shown to all; folded cards and a hand that wins uncontested are never sent to

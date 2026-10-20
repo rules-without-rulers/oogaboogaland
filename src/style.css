@@ -8067,6 +8067,8 @@ body[data-active-scene="poker"] .world-clock { display: none; }
 .poker-status-strip .poker-timer { margin-left: auto; font-variant-numeric: tabular-nums; }
 #poker .poker-status-strip button { min-height: 32px; padding: 4px 9px; font-size: 11px; }
 .poker-timer.urgent { color: #ffd6a3; font-weight: 700; }
+.poker-deck { color: var(--pk-muted); font-size: 11px; }
+.poker-deck.is-bad { color: #ffd6a3; font-weight: 700; }
 .poker-table-layout { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: 24px; }
 .poker-play { min-width: 0; }
 .poker-arena { position: relative; height: clamp(300px, 36vh, 470px); width: 100%; margin: 26px auto 30px; isolation: isolate; }

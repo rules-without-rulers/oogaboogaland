@@ -22,6 +22,52 @@
     for (let i = 51; i > 0; i--) { const j = randomInt(i + 1), c = deck[i]; deck[i] = deck[j]; deck[j] = c; }
     return deck;
   };
+  // The live tables' commit-reveal deck. Before a deal the dealer publishes `commitFor(seed)` for a secret seed of its
+  // own; each seated page adds a random seed; the deck is `deckFrom(seed, seeds, hand)`, a Fisher-Yates driven by
+  // SHA-256 blocks, so the dealer cannot pick it once committed and no page can predict it. After the hand the seed is
+  // revealed and `checkReveal` recomputes the deck and replays the deal against every card a view shows. The dealer
+  // still knows the cards during the hand: this proves the deck was fixed before the deal, not that it stayed hidden.
+  const HEX64 = /^[0-9a-f]{64}$/;
+  const hex = bytes => Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+  const sha = text => BL.lifehash.sha256(new TextEncoder().encode(text));
+  const commitFor = seed => hex(sha("ooga-den-commit|" + seed));
+  const deckFrom = (seed, seeds, hand) => {
+    if (!HEX64.test(seed) || !Array.isArray(seeds) || !seeds.every(s => HEX64.test(s)) || !Number.isSafeInteger(hand)) throw new Error("Invalid deck seeds");
+    const key = hex(sha(`ooga-den-deck|${seed}|${hand}|${[...seeds].sort().join(",")}`));
+    const deck = Array.from({ length: 52 }, (_, i) => i);
+    let block = null, at = 32, counter = 0;
+    const word = () => {
+      if (at === 32) { block = sha(`${key}|${counter++}`); at = 0; }
+      const w = (block[at] << 24 | block[at + 1] << 16 | block[at + 2] << 8 | block[at + 3]) >>> 0;
+      at += 4;
+      return w;
+    };
+    for (let i = 51; i > 0; i--) {
+      const bound = i + 1, limit = 0x100000000 - 0x100000000 % bound;
+      let w;
+      do w = word(); while (w >= limit);
+      const j = w % bound, c = deck[i]; deck[i] = deck[j]; deck[j] = c;
+    }
+    return deck;
+  };
+  // Who a view's hand was dealt to, in dealing order: from the dealer's left round to the dealer.
+  const dealOrder = s => {
+    const ids = [];
+    for (let k = 1; k <= SEATS; k++) { const p = s.seats[(s.dealer + k) % SEATS]; if (p && p.cards.length === 2) ids.push(p.id); }
+    return ids;
+  };
+  // Whether a revealed hand is honest for this view: the seed matches the commitment published before the deal, and
+  // its deck holds every hole card and board card the view shows where `start` dealt them (two rounds, then the board).
+  const checkReveal = (reveal, s) => {
+    if (!reveal || !HEX64.test(reveal.seed) || commitFor(reveal.seed) !== reveal.commit || !Array.isArray(reveal.order)) return false;
+    const deck = deckFrom(reveal.seed, reveal.seeds, reveal.hand), n = reveal.order.length;
+    for (let round = 0; round < 2; round++) for (let k = 0; k < n; k++) {
+      const p = s.seats.find(q => q && q.id === reveal.order[k]), c = p ? p.cards[round] : null;
+      if (c !== null && c !== undefined && c !== deck[round * n + k]) return false;
+    }
+    for (let k = 0; k < s.board.length; k++) if (s.board[k] !== null && s.board[k] !== deck[2 * n + k]) return false;
+    return true;
+  };
   const rank = c => c % 13 + 2;
   const suit = c => Math.floor(c / 13);
   const cardName = c => "23456789TJQKA"[c % 13] + "♣♦♥♠"[suit(c)];
@@ -172,10 +218,12 @@
       if (!s || !!s.out === !!on) return;
       s.out = !!on; log(`${s.name} ${on ? "sits out" : "is back"}`);
     };
-    const start = () => {
+    // `dealt`: a deck chosen elsewhere (the live dealer's commit-reveal deck), checked to be all 52 cards once each.
+    const start = (dealt = null) => {
       if (playing()) throw new Error("A hand is already running");
       if (seats.filter(s => s && s.stack > 0 && !s.out).length < 2) throw new Error("At least two funded players are needed");
-      const fresh = sealed ? Array.from({ length: 52 }, (_, i) => i) : shuffledDeck(); // Fail before mutating any hand or balance.
+      if (dealt && (!Array.isArray(dealt) || dealt.length !== 52 || new Set(dealt).size !== 52 || !dealt.every(c => Number.isInteger(c) && c >= 0 && c < 52))) throw new Error("Invalid deck");
+      const fresh = sealed ? Array.from({ length: 52 }, (_, i) => i) : dealt ? dealt.slice() : shuffledDeck(); // Fail before mutating any hand or balance.
       before = seats.map(s => s?.stack ?? null); beforeDealer = dealer; known = new Map();
       deck = fresh; cursor = 0; board = []; result = null; lastPot = 0; hand++; phase = "preflop";
       currentBet = BIG; lastRaise = BIG;
@@ -259,5 +307,5 @@
     else table.act(id, l.check ? "check" : "call");
   };
   BL.pokerRules = { SEATS, BUY_IN, SMALL, BIG, randomInt, shuffledDeck, evaluate, settle, create: () => create(), createSealed: initial => create(true, initial),
-    createDealer: (saved = null) => create(false, null, { late: true, saved }), botAction, cardName };
+    createDealer: (saved = null) => create(false, null, { late: true, saved }), botAction, cardName, commitFor, deckFrom, dealOrder, checkReveal };
 })();

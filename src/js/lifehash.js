@@ -43,7 +43,9 @@
  */
 (() => {
   "use strict";
-  const BL = window.BL = window.BL || {};
+  // Also loaded by the Ember Den's dealer on the Worker (worker/src/poker-den.js), for `sha256`.
+  const scope = typeof window === "undefined" ? globalThis : window;
+  const BL = scope.BL = scope.BL || {};
   const UTF8 = new TextEncoder();
   const K = new Uint32Array([
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -174,5 +176,5 @@
     const hash = Array.from(digest, (v) => v.toString(16).padStart(2, "0")).join("");
     return { width: 32, height: 32, colors, hash };
   };
-  BL.lifehash = { make };
+  BL.lifehash = { make, sha256 };
 })();

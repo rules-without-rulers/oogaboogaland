@@ -8,6 +8,8 @@
 //                { t: "out", on }            sit out of the next deals (true), or be dealt in again (false), which also
 //                                            takes back a leave asked for mid-hand
 //                { t: "topup" }              the free top-up to BUY_IN bananas, once a UTC day, when running low
+//                { t: "seed", table, s }     a seated page's random seed (64 hex) for the next deal at `table`, sent once
+//                                            it sees that deal's `commit`; the deck comes from the dealer's seed and these
 //                "ping"                      answered "pong" without waking the den
 // Den → client:  welcome { you, now, wallet, tables }  on connect: who you are, your bananas and every table's view
 //                table { i, s, now }        table `i` changed: its view for you, your own cards only where you sit
@@ -17,7 +19,10 @@
 //                kick { reason }            `replaced` (a newer tab), `full`, `stale` (silent STALE_MS: reconnect) or
 //                                            `revoked` (banned or deleted); the socket closes after it
 // A view is the rules engine's `snapshot(viewer)` plus the dealer's clocks: `deadline`, when the player to act runs
-// out of time, and `dealAt`, when the next hand deals (server milliseconds; 0 for none).
+// out of time, and `dealAt`, when the next hand deals (server milliseconds; 0 for none). It also carries the deal's
+// commit-reveal: `commit`, the SHA-256 commitment to the dealer's seed for the hand being played or the next one;
+// `seeded`, the seats whose seed the next deal holds; and once a hand is over `reveal`, `{ hand, seed, commit, seeds,
+// order }`, enough for any page to recompute that hand's deck.
 
 export const TABLES = 10;
 export const SEATS = 9;
@@ -46,6 +51,7 @@ export const dayOf = (ms) => Math.floor(ms / DAY_MS);
 
 const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 const ACTIONS = new Set(["fold", "check", "call", "raise"]);
+const HEX64 = /^[0-9a-f]{64}$/;
 
 /** A parsed client message, `null` for one to ignore, or `false` for one that should close the socket. */
 export const parsePokerMessage = (text) => {
@@ -67,6 +73,7 @@ export const parsePokerMessage = (text) => {
   if (msg.t === "deal") return { t: "deal" };
   if (msg.t === "out") return typeof msg.on === "boolean" ? { t: "out", on: msg.on } : null;
   if (msg.t === "topup") return { t: "topup" };
+  if (msg.t === "seed") return int(msg.table, 0, TABLES - 1) && typeof msg.s === "string" && HEX64.test(msg.s) ? { t: "seed", table: msg.table, s: msg.s } : null;
   return null;
 };
 

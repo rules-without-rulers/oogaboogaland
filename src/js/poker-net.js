@@ -25,6 +25,20 @@
     const playing = s => s.phase !== "waiting" && s.phase !== "showdown";
     const tables = snapshots.map((_, i) => ({ snapshot: () => snapshots[i], get version() { return revisions[i]; }, get playing() { return playing(snapshots[i]); } }));
     const mine = () => snapshots.findIndex(s => s.seats.some(p => p && p.id === identity));
+    // The deal's commit-reveal (poker-rules.js): a seated page adds a random seed to each deal it sees committed, and
+    // every page checks each hand the dealer reveals. `checked[i]` is the last revealed hand at table i and its verdict.
+    const sentFor = new Array(TABLES).fill(""), checked = Array.from({ length: TABLES }, () => ({ hand: 0, ok: null }));
+    const seedHex = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
+    const afterView = i => {
+      const s = snapshots[i];
+      if (s.commit && !playing(s) && sentFor[i] !== s.commit && s.seats.some(p => p && p.id === identity) && !(s.seeded || []).includes(identity)) {
+        if (send({ t: "seed", table: i, s: seedHex() })) sentFor[i] = s.commit;
+      }
+      if (s.reveal && checked[i].hand !== s.reveal.hand) {
+        checked[i].hand = s.reveal.hand;
+        try { checked[i].ok = BL.pokerRules.checkReveal(s.reveal, s); } catch { checked[i].ok = false; }
+      }
+    };
     // The fastest sample of the dealer's clock is the best estimate of it, as net.js keeps the room's.
     const clock = now => {
       if (typeof now !== "number") return;
@@ -58,8 +72,8 @@
       if (m.t === "welcome") {
         if (!m.you || !Array.isArray(m.tables) || m.tables.length !== TABLES) return;
         identity = String(m.you.id); wallet = { bananas: m.wallet.bananas, topUp: m.wallet.topUp === true }; clock(m.now);
-        m.tables.forEach((s, i) => { snapshots[i] = s; revisions[i]++; });
         retry = 0; connection = "live"; busy = false;
+        m.tables.forEach((s, i) => { snapshots[i] = s; revisions[i]++; afterView(i); });
         settleWelcome(null);
         changed();
       } else if (m.t === "table") {
@@ -67,6 +81,7 @@
         clock(m.now);
         snapshots[m.i] = m.s; revisions[m.i]++;
         if (busy && m.i === mine()) busy = false;
+        afterView(m.i);
         changed();
       } else if (m.t === "wallet") {
         wallet = { bananas: m.bananas, topUp: m.topUp === true };
@@ -140,7 +155,7 @@
       kind: "den", tables, connect, action, fairness: null,
       get identity() { return identity; }, get account() { return identity; }, get table() { const i = mine(); return i >= 0 ? i : watching; },
       get connection() { return connection; }, get busy() { return busy; }, get wallet() { return wallet; },
-      get deadline() { return snapshots[watching].deadline || null; }, now: () => Date.now() + offset,
+      get deadline() { return snapshots[watching].deadline || null; }, now: () => Date.now() + offset, deckCheck: i => checked[i],
       disconnect(message) { stopped = true; clearTimeout(retryTimer); close(); connection = "failed"; busy = false; notice(message); changed(); },
       dispose() { stopped = true; clearTimeout(retryTimer); retryTimer = 0; settleWelcome(new Error("Left the live tables")); close(); }
     };

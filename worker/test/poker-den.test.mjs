@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import * as protocol from "../src/protocol.js";
 import * as poker from "../src/poker-protocol.js";
+import "../../src/js/lifehash.js";
 import "../../src/js/poker-rules.js";
 
 const R = globalThis.BL.pokerRules;
@@ -33,7 +34,7 @@ const host = () => {
   const context = {
     ...protocol, ...poker, BL: globalThis.BL,
     DurableObject: class { constructor(ctx, env) { this.ctx = ctx; this.env = env; } },
-    WebSocketPair, Response, WebSocketRequestResponsePair: class {}, Date: { now: () => clock.now }, console,
+    WebSocketPair, Response, WebSocketRequestResponsePair: class {}, Date: { now: () => clock.now }, console, crypto: globalThis.crypto,
     // db.js's read, over whatever `env.DB` a test passes to `den(env)`.
     getPlayer: (db, id) => db.getPlayer(id),
   };
@@ -138,6 +139,43 @@ test("poker den: two players sit, the dealer deals by itself and each page sees 
   assert.ok(!("deck" in open) && !JSON.stringify(watcher.sent).includes('"deck"'), "no deck ever leaves the den");
   assert.ok(open.deadline > h.clock.now, "the player to act has a clock");
   assert.equal(h.alarm, open.deadline);
+});
+
+// Rule (#224 review): the deck is committed before the deal and revealed after it, so any page can check the dealer
+// did not choose it; seated pages' seeds go into it, and nobody else's.
+test("poker den: each deal is committed before it is dealt, takes the seated pages' seeds, and is revealed after", async () => {
+  const h = host(), d = await h.den();
+  const a = await h.connect(d, 1, "ana"), b = await h.connect(d, 2, "bo"), watcher = await h.connect(d, 3, "cy");
+  await h.say(d, a, { t: "sit", table: 6, seat: 0 });
+  await h.say(d, b, { t: "sit", table: 6, seat: 4 });
+  const commit = lastTable(a, 6).commit;
+  assert.match(commit, /^[0-9a-f]{64}$/, "the next deal is committed as soon as it is booked");
+  const seedA = "a1".repeat(32), seedB = "b2".repeat(32);
+  await h.say(d, a, { t: "seed", table: 6, s: seedA });
+  await h.say(d, b, { t: "seed", table: 6, s: seedB });
+  await h.say(d, watcher, { t: "seed", table: 6, s: "c3".repeat(32) });
+  await h.say(d, a, { t: "seed", table: 6, s: "d4".repeat(32) });
+  assert.deepEqual(lastTable(watcher, 6).seeded.sort(), ["1", "2"], "a spectator's seed and a second seed are ignored");
+  await h.wait(d, FIRST_DEAL_MS);
+  const dealt = lastTable(a, 6);
+  assert.equal(dealt.phase, "preflop");
+  assert.equal(dealt.commit, commit, "the hand plays under the commitment shown before it");
+  assert.equal(dealt.reveal, null);
+  const secret = d.tables[6].meta.reveal.seed;
+  for (const ws of [a, b, watcher]) assert.ok(!JSON.stringify(ws.sent).includes(secret), "the dealer's seed stays secret during the hand");
+  const first = dealt.seats[dealt.turn].id === "1" ? a : b;
+  await h.say(d, first, { t: "act", a: "fold", v: lastTable(first, 6).version });
+  const over = lastTable(a, 6), reveal = over.reveal;
+  assert.ok(reveal && reveal.hand === over.hand && reveal.commit === commit && R.commitFor(reveal.seed) === commit);
+  assert.deepEqual([...reveal.seeds].sort(), [seedA, seedB].sort());
+  assert.deepEqual(reveal.order.slice().sort(), ["1", "2"]);
+  assert.ok(R.checkReveal(reveal, dealt), "the revealed deck deals ana's own cards");
+  assert.ok(R.checkReveal(reveal, lastTable(b, 6)), "and bo's");
+  assert.ok(R.checkReveal(reveal, lastTable(watcher, 6)), "and agrees with a spectator's view");
+  assert.ok(!R.checkReveal({ ...reveal, seed: "e5".repeat(32) }, dealt), "another seed fails the commitment");
+  assert.ok(!R.checkReveal({ ...reveal, seeds: [seedA] }, dealt), "leaving a page's seed out makes a different deck");
+  assert.match(lastTable(a, 6).commit, /^[0-9a-f]{64}$/, "the next deal is committed afresh");
+  assert.notEqual(lastTable(a, 6).commit, commit);
 });
 
 test("poker den: up to 300 hands at a four-player table never show a page a card that is not theirs to see", async () => {
