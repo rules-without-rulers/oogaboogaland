@@ -26,6 +26,8 @@ import {
 } from "./poker-protocol.js";
 
 const R = globalThis.BL.pokerRules;
+// How stale a socket's stored `seen` may grow before a message writes it again: a sixth of STALE_MS.
+const SEEN_SAVE_MS = STALE_MS / 6;
 const tableKey = (i) => `t${i}`;
 const walletKey = (id) => `w:${id}`;
 // `turnVersion`: the table's version when the current turn began; an action seen before it is stale.
@@ -40,7 +42,8 @@ export class PokerDen extends DurableObject {
     this.wallets = new Map();
     this.forgotten = new Set();
     this.alarmAt = null;
-    // The next sweep for silent sockets and revoked accounts, due while anyone is here (0 for none).
+    // The next sweep for silent sockets and revoked accounts, due while anyone is here (0 for none). Stored, so a den
+    // woken by its alarm still knows the sweep fell due.
     this.sweepAt = 0;
     this.tables = Array.from({ length: TABLES }, () => ({ rules: R.createDealer(), meta: freshMeta() }));
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -51,6 +54,7 @@ export class PokerDen extends DurableObject {
         if (row) this.tables[i] = { rules: R.createDealer(row.rules), meta: { ...freshMeta(), ...row.meta } };
       }
       this.forgotten = new Set((await ctx.storage.get("forgotten")) || []);
+      this.sweepAt = (await ctx.storage.get("sweepAt")) || 0;
       // Everyone seated keeps their wallet in memory, so a hand ending pays it without waiting on storage; a deleted
       // account still seated until its hand ends has none.
       const seated = this.tables.flatMap((t) => t.rules.snapshot().seats.filter(Boolean).map((s) => Number(s.id))).filter((id) => !this.forgotten.has(id));
@@ -66,8 +70,15 @@ export class PokerDen extends DurableObject {
     }
   }
 
+  // `seen` in the attachment is when the page last spoke, so a woken den does not take a silent page for a fresh one.
   record(ws, a) {
-    return { ws, id: a.id, login: a.login, display: a.display, bucket: { tokens: ACT_BURST, at: Date.now() }, seenAt: Date.now() };
+    const seenAt = a.seen || Date.now();
+    return { ws, id: a.id, login: a.login, display: a.display, bucket: { tokens: ACT_BURST, at: Date.now() }, seenAt, seenSaved: seenAt };
+  }
+
+  attach(p) {
+    p.ws.serializeAttachment({ id: p.id, login: p.login, display: p.display, seen: p.seenAt });
+    p.seenSaved = p.seenAt;
   }
 
   send(ws, msg) {
@@ -270,7 +281,10 @@ export class PokerDen extends DurableObject {
   // One alarm for the den: the earliest turn deadline, automatic deal or gone player's stand-up across every table,
   // and while anyone is here the sweep, at most SWEEP_MS away.
   reschedule() {
-    if (this.players.size && !this.sweepAt) this.sweepAt = Date.now() + SWEEP_MS;
+    if (this.players.size && !this.sweepAt) {
+      this.sweepAt = Date.now() + SWEEP_MS;
+      this.ctx.storage.put("sweepAt", this.sweepAt);
+    }
     let next = this.sweepAt || Infinity;
     for (const t of this.tables) {
       if (t.rules.playing) {
@@ -307,7 +321,7 @@ export class PokerDen extends DurableObject {
       return new Response(null, { status: 101, webSocket: client });
     }
     const p = this.record(server, who);
-    server.serializeAttachment({ id: who.id, login: who.login, display: who.display });
+    this.attach(p);
     this.players.set(who.id, p);
     await this.wallet(who.id);
     if (this.players.get(who.id) === p) this.arrive(p, Date.now());
@@ -345,6 +359,7 @@ export class PokerDen extends DurableObject {
     }
     const now = Date.now();
     p.seenAt = now;
+    if (now - p.seenSaved >= SEEN_SAVE_MS) this.attach(p);
     if (!msg) return;
     if (!takeToken(p.bucket, ACT_HZ, now, ACT_BURST)) {
       this.send(ws, { t: "error", text: "One move at a time, please." });
@@ -530,6 +545,7 @@ export class PokerDen extends DurableObject {
     this.alarmAt = null;
     if (this.sweepAt && now >= this.sweepAt) {
       this.sweepAt = 0;
+      this.ctx.storage.put("sweepAt", 0);
       await this.sweep(now);
     }
     for (let i = 0; i < TABLES; i++) {

@@ -34,6 +34,8 @@ const host = () => {
     ...protocol, ...poker, BL: globalThis.BL,
     DurableObject: class { constructor(ctx, env) { this.ctx = ctx; this.env = env; } },
     WebSocketPair, Response, WebSocketRequestResponsePair: class {}, Date: { now: () => clock.now }, console,
+    // db.js's read, over whatever `env.DB` a test passes to `den(env)`.
+    getPlayer: (db, id) => db.getPlayer(id),
   };
   runInNewContext(source, context);
   const clone = (v) => v === undefined ? undefined : structuredClone(v);
@@ -60,8 +62,8 @@ const host = () => {
     acceptWebSocket: (ws) => accepted.push(ws), getWebSockets: () => accepted.filter((ws) => !ws.closed && !ws.gone), storage,
     getWebSocketAutoResponseTimestamp: (ws) => ws.pingedAt ? new Date(ws.pingedAt) : null,
   };
-  const den = async () => {
-    const d = new context.PokerDen(ctx, {});
+  const den = async (env = {}) => {
+    const d = new context.PokerDen(ctx, env);
     await loading;
     return d;
   };
@@ -396,6 +398,29 @@ test("poker den: a page that loses its network without a close is swept as stale
   for (let i = 0; i < 6; i++) await h.wait(d, 30000);
   assert.equal(d.tables[6].rules.snapshot().seats[0], null, "stood up after AWAY_STAND_MS");
   assert.equal(h.store.get("w:1").b, R.BUY_IN);
+});
+
+// Regression (#224 review): a den that hibernates between alarms forgot its sweep was due and took every woken
+// socket for fresh, so a silent page and a banned account kept their seats for good.
+test("poker den: the sweep still drops a silent page and a banned account when the den sleeps between alarms", async () => {
+  const rows = new Map([[1, { id: 1 }], [2, { id: 2 }], [3, { id: 3 }]]);
+  const env = { DB: { getPlayer: async (id) => rows.get(id) || null } };
+  const h = host();
+  let d = await h.den(env);
+  const a = await h.connect(d, 1), b = await h.connect(d, 2), c = await h.connect(d, 3);
+  await h.say(d, a, { t: "sit", table: 6, seat: 0 });
+  await h.say(d, b, { t: "sit", table: 7, seat: 0 });
+  a.silent = true;
+  rows.set(2, { id: 2, banned_at: 1 });
+  for (let i = 0; i < 6; i++) {
+    d = await h.den(env);
+    await h.wait(d, 30000);
+  }
+  assert.equal(lastOf(a, "kick")?.reason, "stale", "the silent page is swept");
+  assert.equal(lastOf(b, "kick")?.reason, "revoked", "the banned account is swept");
+  assert.ok(!d.players.has(1) && !d.players.has(2), "both are gone from the den");
+  assert.equal(lastOf(c, "kick"), undefined, "a page that keeps pinging stays");
+  assert.ok(d.players.has(3));
 });
 
 test("poker den: a hand's end tells each seated player whether today's top-up is open", async () => {
